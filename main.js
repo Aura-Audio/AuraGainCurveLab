@@ -7,9 +7,6 @@
 // Import the UI module
 import { initUI, setStatus, showError } from './ui.js';
 
-// Import the WASM module loader (for window access)
-import { loadDspModule } from './wasm.js';
-
 /**
  * Application state
  */
@@ -23,29 +20,26 @@ const appState = {
  */
 async function initApp() {
   if (appState.initialized) return;
-  
+
   try {
     // Set initial status
     setStatus('initializing...', false);
-    
-    // Make WASM loader available globally for UI module
-    window.loadDspModule = loadDspModule;
-    
+
     // Initialize UI (which will load WASM and set up everything)
     await initUI();
-    
+
     appState.initialized = true;
     appState.initializationError = null;
-    
+
     console.log('GAIN CURVE LAB initialized successfully');
   } catch (err) {
     appState.initialized = false;
     appState.initializationError = err;
-    
+
     console.error('Failed to initialize GAIN CURVE LAB:', err);
     setStatus('initialization failed', false);
     showError(`Failed to initialize application: ${err.message}`);
-    
+
     // Show a user-friendly error message
     const errorContainer = document.createElement('div');
     errorContainer.style.cssText = `
@@ -89,7 +83,7 @@ function checkWebAudioSupport() {
     if (!AudioContext) {
       throw new Error('Web Audio API not supported in this browser');
     }
-    
+
     // Test if we can create a context
     const testCtx = new AudioContext();
     testCtx.close();
@@ -106,7 +100,7 @@ function checkWebAudioSupport() {
  */
 function checkWebAssemblySupport() {
   try {
-    if (typeof WebAssembly === 'object' && 
+    if (typeof WebAssembly === 'object' &&
         typeof WebAssembly.instantiate === 'function') {
       return true;
     }
@@ -122,15 +116,15 @@ function checkWebAssemblySupport() {
  */
 function showCompatibilityWarning() {
   const unsupported = [];
-  
+
   if (!checkWebAudioSupport()) {
     unsupported.push('Web Audio API');
   }
-  
+
   if (!checkWebAssemblySupport()) {
     unsupported.push('WebAssembly');
   }
-  
+
   if (unsupported.length > 0) {
     const warningContainer = document.createElement('div');
     warningContainer.style.cssText = `
