@@ -1,171 +1,137 @@
 /**
- * WASM Module for DSP (Digital Signal Processing).
- * Handles noise generation, RMS calculations, and other audio processing tasks.
- * @module wasm
+ * DSP Module — WASM with robust JS fallback
+ * Handles noise generation and RMS calculations.
  */
 
-// WASM module (Base64 encoded)
 const DSP_WASM_B64 = "AGFzbQEAAAABGQVgAXwBfGAAAX1gAX8AYAJ/fwBgAn9/AX0CCwEDZW52A2xvZwAAAwcGAQIDAwMEBQQBAQggBgkBfwFB5dCFKgsHPQYGbWVtb3J5AgAEc2VlZAACCWdlbl93aGl0ZQADCGdlbl9waW5rAAQJZ2VuX2Jyb3duAAUGcm1zX2RiAAYKmQQGOQEBfyMAIQAgACAAQQ10cyEAIAAgAEERdnMhACAAIABBBXRzIQAgACQAIACzQwAAADCUQwAAgD+TCwYAIAAkAAsrAQF/QQAhAgJAA0AgAiABTw0BIAAgAkEEbGoQATgCACACQQFqIQIMAAsLC9IBAgF/CX1BACECAkADQCACIAFPDQEQASEDIARDSrV/P5QgA0O9ZmM9lJIhBCAFQzhKfj+UIANDZcGZPZSSIQUgBkNiEHg/lCADQ2GLHT6UkiEGIAdD8tJdP5QgA0P4954+lJIhByAIQ83MDD+UIANDjm8IP5SSIQhDOPhCvyAJlCADQ61tijyUkyEJIAQgBZIgBpIgB5IgCJIgCZIgCpIgA0NnRAk/lJIhCyADQ5xq7T2UIQogACACQQRsaiALQ65H4T2UOAIAIAJBAWohAgwACwsgAyABuKMhBSAFnyEGIAZE8WjjiLX45D5lBH1DAACgwgVEAAAAAAAANEAgBhAARBZVtbuxawJAo6K2Cws=";
 
-/**
- * WASM Memory Offsets (bytes)
- */
 export const WASM_CONFIG = {
-  NOISE_OFFSET: 0,
-  NOISE_CAPACITY: 100000,
-  RMS_BEFORE_OFFSET: 400000,
-  RMS_AFTER_OFFSET: 410000,
-  SAMPLE_RATE: 44100,
-  BUFFER_SIZE: 2048
+  BUFFER_SIZE: 2048,
+  SAMPLE_RATE: 44100
 };
 
-/**
- * DSP Module Instance
- * @type {Object|null}
- */
 let dsp = null;
+let wasmReady = false;
 
-/**
- * Convert Base64 to Uint8Array
- * @param {string} b64 - Base64 encoded string
- * @returns {Uint8Array} - Decoded bytes
- */
 function b64ToBytes(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) {
-    bytes[i] = bin.charCodeAt(i);
-  }
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
 }
 
-/**
- * Load and instantiate the WASM module
- * @returns {Promise<Object>} - Resolves with the WASM exports and memory
- */
 export async function loadDspModule() {
-  if (dsp) return dsp;
-
+  if (wasmReady) return dsp;
   try {
     const bytes = b64ToBytes(DSP_WASM_B64);
     const { instance } = await WebAssembly.instantiate(bytes, {
-      env: {
-        log: Math.log,
-      },
+      env: { log: Math.log }
     });
+    if (!instance.exports || !instance.exports.memory) {
+      throw new Error('WASM missing memory export');
+    }
     dsp = instance.exports;
-    console.log("WASM module loaded successfully");
+    wasmReady = true;
+    console.log('WASM DSP loaded');
     return dsp;
   } catch (err) {
-    console.error("Failed to load WASM module:", err);
-    throw new Error("WASM module failed to load. Falling back to JavaScript implementations.");
+    console.warn('WASM unavailable, using JS fallback:', err.message);
+    wasmReady = false;
+    dsp = null;
+    return null;
   }
 }
 
-/**
- * Get the WASM module instance
- * @returns {Object|null} - The WASM exports and memory, or null if not loaded
- */
 export function getDspModule() {
   return dsp;
 }
 
-/**
- * Generate noise buffer using WASM
- * @param {AudioContext} audioCtx - Web Audio API context
- * @param {string} type - Noise type ('white', 'pink', 'brown')
- * @returns {AudioBuffer|null} - Generated noise buffer or null if WASM not available
- */
+/* ───────── JS Noise Generators ───────── */
+
 export function createNoiseBuffer(audioCtx, type) {
-  if (!dsp) {
-    console.warn("WASM module not loaded. Cannot generate noise.");
-    return null;
-  }
-
-  try {
-    const len = Math.min(audioCtx.sampleRate * 2, WASM_CONFIG.NOISE_CAPACITY);
-    const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    // Reseed for variety
-    dsp.seed((Date.now() ^ (Math.random() * 0xffffffff)) | 0);
-
-    // Generate noise based on type
-    switch (type) {
-      case 'white':
-        dsp.gen_white(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      case 'pink':
-        dsp.gen_pink(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      case 'brown':
-        dsp.gen_brown(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      default:
-        console.warn(`Unknown noise type: ${type}. Defaulting to white noise.`);
-        dsp.gen_white(WASM_CONFIG.NOISE_OFFSET, len);
+  if (dsp && dsp.memory && dsp.gen_white && dsp.gen_pink && dsp.gen_brown) {
+    try {
+      const len = Math.min(audioCtx.sampleRate * 2, 100000);
+      const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      dsp.seed((Date.now() ^ (Math.random() * 0xffffffff)) | 0);
+      const off = 0;
+      switch (type) {
+        case 'white': dsp.gen_white(off, len); break;
+        case 'pink':  dsp.gen_pink(off, len);  break;
+        case 'brown': dsp.gen_brown(off, len); break;
+        default:      dsp.gen_white(off, len);
+      }
+      const view = new Float32Array(dsp.memory.buffer, off, len);
+      data.set(view);
+      return buffer;
+    } catch (e) {
+      console.warn('WASM noise failed, falling back to JS');
     }
-
-    // Copy from WASM memory to AudioBuffer
-    const wasmView = new Float32Array(
-      dsp.memory.buffer,
-      WASM_CONFIG.NOISE_OFFSET,
-      len
-    );
-    data.set(wasmView);
-    return buffer;
-  } catch (err) {
-    console.error("Failed to create noise buffer:", err);
-    return null;
   }
+  return createNoiseBufferJS(audioCtx, type);
 }
 
-/**
- * Calculate RMS in dBFS from a Float32Array using WASM
- * @param {Float32Array} floatData - Audio sample data
- * @param {number} wasmOffset - Offset in WASM memory to use for scratch space
- * @returns {number} - RMS level in dBFS
- */
-export function dbFromBuffer(floatData, wasmOffset) {
-  if (!dsp) {
-    console.warn("WASM module not loaded. Using fallback JS RMS calculation.");
-    return calculateRmsJs(floatData);
-  }
+function createNoiseBufferJS(audioCtx, type) {
+  const len = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
 
-  try {
-    const view = new Float32Array(
-      dsp.memory.buffer,
-      wasmOffset,
-      floatData.length
-    );
-    view.set(floatData);
-    return dsp.rms_db(wasmOffset, floatData.length);
-  } catch (err) {
-    console.error("WASM RMS calculation failed:", err);
-    return calculateRmsJs(floatData);
+  if (type === 'white' || !type) {
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
   }
+  else if (type === 'pink') {
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < len; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      const out = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+      b6 = white * 0.115926;
+      data[i] = out;
+    }
+  }
+  else if (type === 'brown') {
+    let lastOut = 0;
+    for (let i = 0; i < len; i++) {
+      const white = Math.random() * 2 - 1;
+      lastOut = (lastOut + white * 0.02) / 1.02;
+      data[i] = lastOut * 3.5;
+    }
+  }
+  return buffer;
 }
 
-/**
- * Fallback JavaScript RMS to dBFS calculation
- * @param {Float32Array} floatData - Audio sample data
- * @returns {number} - RMS level in dBFS
- */
+/* ───────── JS RMS Calculator ───────── */
+
+export function dbFromBuffer(floatData, wasmOffset = 0) {
+  if (dsp && dsp.memory && dsp.rms_db) {
+    try {
+      const memLen = dsp.memory.buffer.byteLength;
+      if (memLen < floatData.length * 4 + wasmOffset + 4) {
+        throw new Error('WASM memory too small');
+      }
+      const view = new Float32Array(dsp.memory.buffer, wasmOffset, floatData.length);
+      view.set(floatData);
+      return dsp.rms_db(wasmOffset, floatData.length);
+    } catch (e) {
+      // fallthrough to JS
+    }
+  }
+  return calculateRmsJs(floatData);
+}
+
 function calculateRmsJs(floatData) {
   let sum = 0;
-  for (let i = 0; i < floatData.length; i++) {
-    sum += floatData[i] * floatData[i];
-  }
+  for (let i = 0; i < floatData.length; i++) sum += floatData[i] * floatData[i];
   const rms = Math.sqrt(sum / floatData.length);
-  // Convert to dBFS (assuming max value is 1.0)
   return rms > 0 ? 20 * Math.log10(rms) : -Infinity;
 }
 
-/**
- * Convert dB to percentage for UI display
- * @param {number} db - Decibel value
- * @returns {number} - Percentage (0-100)
- */
 export function dbToPct(db) {
   const clamped = Math.max(-60, Math.min(0, db));
   return ((clamped + 60) / 60) * 100;

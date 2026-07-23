@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:">
-  <title>GAIN CURVE LAB — 20-Engine Rack</title>
+  <title>AuraGainCurveLab — 20-Engine Rack</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
@@ -13,78 +12,25 @@
 <body>
   <div class="wrap">
     <header>
-      <div class="eyebrow">Signal Scaling Demonstrator</div>
-      <h1>GAIN CURVE <span>LAB</span></h1>
+      <div class="eyebrow">Multi-Track Gain Curve Laboratory</div>
+      <h1>AuraGainCurveLab <span>20-Engine Rack</span></h1>
       <p>
-        20 engines run at once, each ramping its own gain from <b>100%</b> down to its own floor and snapping back, on its own
-        cycle and curve shape. Click any track to inspect its <b style="color:var(--before)">before</b> (unscaled source) and
-        <b style="color:var(--after)">after</b> (what's actually mixed to the bus) waveforms in detail.
+        Twenty independent gain-scaling engines, each with a unique curve algorithm.
+        Select a source, set duration, and start any engine to hear and visualize the effect.
+        <b>All processing is local — no audio leaves your browser.</b>
       </p>
     </header>
 
-    <div class="panel controls">
-      <div class="transport">
-        <button class="playbtn" id="playBtn" title="Start or stop all 20 engines">▶ START ALL</button>
-        <span class="status" id="statusText"><span class="dot"></span>idle</span>
-      </div>
-      <div class="control-group">
-        <label class="grouplabel">Monitor volume (safety — only affects what you hear)</label>
-        <div class="slider-field">
-          <input type="range" id="monitorSlider" min="0" max="100" value="35" step="1" title="Adjust monitor volume">
-          <span class="val" id="monitorVal">35%</span>
-        </div>
-      </div>
-      <div class="error-message" id="errorMessage"></div>
+    <div class="global-controls">
+      <button id="stopAllBtn" class="btn danger">■ STOP ALL ENGINES</button>
+      <span class="status" id="globalStatus">Idle · 20 engines ready</span>
     </div>
 
-    <div class="panel rack-panel">
-      <label class="grouplabel">Rack — 20 engines (click a row to inspect)</label>
-      <div class="track-rack" id="trackRack"><!-- rows injected by ui.js --></div>
-    </div>
-
-    <div class="panel detail-panel">
-      <label class="grouplabel">Inspect: <span id="detailLabel">T-01 SINE 110 · linear · 2s</span></label>
-      <div class="meters">
-        <div class="meter-panel before">
-          <h3>Before</h3>
-          <div class="tag">Unscaled source · reference</div>
-          <canvas class="scope" id="scopeBefore"></canvas>
-          <div class="db-row">
-            <div class="db-bar-track"><div class="db-bar-fill" id="detailBarBefore"></div></div>
-            <div class="db-readout">RMS <b id="detailDbBefore">−∞</b> dB</div>
-          </div>
-          <div class="scale-readout"><span>Gain applied</span><span class="pct" style="color:var(--before)">100%</span></div>
-        </div>
-
-        <div class="meter-panel after">
-          <h3>After</h3>
-          <div class="tag">Scaled output · what's on the bus</div>
-          <canvas class="scope" id="scopeAfter"></canvas>
-          <div class="db-row">
-            <div class="db-bar-track"><div class="db-bar-fill" id="detailBarAfter"></div></div>
-            <div class="db-readout">RMS <b id="detailDbAfter">−∞</b> dB</div>
-          </div>
-          <div class="scale-readout"><span>Gain applied</span><span class="pct" id="detailGainPct">100%</span></div>
-        </div>
-      </div>
-
-      <div class="panel delta-strip">
-        <div>
-          <div class="label">Level reduction (before − after)</div>
-          <div class="sub">Updates live as this track's ramp runs its cycle</div>
-        </div>
-        <div class="value" id="detailDeltaDb">0.0 dB</div>
-      </div>
-
-      <div class="ramp-section">
-        <h3>Gain ramp — one full cycle (this track's own curve)</h3>
-        <canvas class="ramp" id="rampCanvas"></canvas>
-      </div>
-    </div>
+    <div class="engine-grid" id="engineGrid"></div>
 
     <footer>
-      <b>Notes:</b> each track's "before" signal is analysed only, never mixed to the bus — you always hear the scaled "after" path.
-      A shared compressor guards against 20 tracks clipping at once, but start with the monitor volume low. Headphones recommended.
+      <b>Safety:</b> Each engine has its own monitor volume. Use headphones when using microphone sources to avoid feedback.
+      <b>WASM:</b> DSP acceleration loads automatically if supported; otherwise a pure-JS fallback ensures full functionality.
     </footer>
   </div>
 

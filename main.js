@@ -1,177 +1,193 @@
 /**
- * Main Entry Point for GAIN CURVE LAB.
- * Initializes the application and coordinates between modules.
- * @module main
+ * Main Entry — 20-Engine Rack
  */
 
-// Import the UI module
-import { initUI, setStatus, showError } from './ui.js';
+import { ENGINE_CONFIGS } from './gain-curves.js';
+import { AudioEngine } from './engine.js';
+import { loadDspModule } from './wasm.js';
+import { fitCanvas, drawScope, drawCurvePreview, drawPlayhead } from './visualizer.js';
 
-/**
- * Application state
- */
-const appState = {
-  initialized: false,
-  initializationError: null
+const app = {
+  engines: [],
+  audioCtx: null,
+  animHandle: null,
+  initialized: false
 };
 
-/**
- * Initialize the application
- */
-async function initApp() {
-  if (appState.initialized) return;
+async function init() {
+  if (app.initialized) return;
 
-  try {
-    // Set initial status
-    setStatus('initializing...', false);
-
-    // Initialize UI (which will load WASM and set up everything)
-    await initUI();
-
-    appState.initialized = true;
-    appState.initializationError = null;
-
-    console.log('GAIN CURVE LAB initialized successfully');
-  } catch (err) {
-    appState.initialized = false;
-    appState.initializationError = err;
-
-    console.error('Failed to initialize GAIN CURVE LAB:', err);
-    setStatus('initialization failed', false);
-    showError(`Failed to initialize application: ${err.message}`);
-
-    // Show a user-friendly error message
-    const errorContainer = document.createElement('div');
-    errorContainer.style.cssText = `
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: #ff5c5c;
-      color: white;
-      padding: 20px;
-      border-radius: 8px;
-      text-align: center;
-      z-index: 1000;
-      max-width: 80%;
-    `;
-    errorContainer.innerHTML = `
-      <h2>Initialization Error</h2>
-      <p>${err.message}</p>
-      <p>Please refresh the page to try again.</p>
-      <button onclick="this.parentElement.remove()" style="
-        background: #1a1000;
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        border-radius: 4px;
-        cursor: pointer;
-        margin-top: 10px;
-      ">Dismiss</button>
-    `;
-    document.body.appendChild(errorContainer);
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) {
+    alert('Web Audio API is not supported in this browser.');
+    return;
   }
+
+  app.audioCtx = new AudioContext();
+
+  // Attempt WASM load (non-blocking)
+  try { await loadDspModule(); } catch (e) {
+    console.warn('WASM optional load failed:', e);
+  }
+
+  const grid = document.getElementById('engineGrid');
+
+  ENGINE_CONFIGS.forEach(config => {
+    const engine = new AudioEngine(config, app.audioCtx);
+    engine.connectToDestination(app.audioCtx.destination);
+    app.engines.push(engine);
+
+    const card = buildCard(engine);
+    grid.appendChild(card);
+
+    // Initial static preview
+    const preview = card.querySelector('.curve-preview');
+    drawCurvePreview(preview, config.curve, config.color);
+  });
+
+  document.getElementById('stopAllBtn').addEventListener('click', () => {
+    app.engines.forEach(en => {
+      en.stop();
+      updatePlayButton(en.id, false);
+    });
+  });
+
+  window.addEventListener('resize', () => {
+    app.engines.forEach(en => {
+      const card = document.querySelector(`.engine-card[data-id="${en.id}"]`);
+      if (card) {
+        const preview = card.querySelector('.curve-preview');
+        const scope = card.querySelector('.engine-scope');
+        fitCanvas(preview);
+        fitCanvas(scope);
+        drawCurvePreview(preview, en.config.curve, en.config.color);
+      }
+    });
+  });
+
+  animate();
+  app.initialized = true;
+  console.log('AuraGainCurveLab — 20 engines ready');
 }
 
-/**
- * Check if Web Audio API is supported
- * @returns {boolean} - True if Web Audio API is supported
- */
-function checkWebAudioSupport() {
-  try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) {
-      throw new Error('Web Audio API not supported in this browser');
+function buildCard(engine) {
+  const div = document.createElement('div');
+  div.className = 'engine-card';
+  div.dataset.id = engine.id;
+
+  div.innerHTML = `
+    <div class="engine-header" style="border-color:${engine.color}">
+      <div>
+        <div class="engine-num">#${String(engine.id).padStart(2, '0')}</div>
+        <div class="engine-name">${engine.name}</div>
+        <div class="engine-tag">${engine.tag}</div>
+      </div>
+      <button class="engine-playbtn" data-id="${engine.id}" title="Start/Stop engine">▶</button>
+    </div>
+    <canvas class="curve-preview" width="300" height="60"></canvas>
+    <div class="engine-scope-wrap">
+      <canvas class="engine-scope" id="scope-${engine.id}" width="300" height="80"></canvas>
+    </div>
+    <div class="engine-controls">
+      <select class="engine-source" data-id="${engine.id}">
+        <option value="tone" selected>Tone</option>
+        <option value="mic">Mic</option>
+        <option value="white">White</option>
+        <option value="pink">Pink</option>
+        <option value="brown">Brown</option>
+      </select>
+      <select class="engine-dur" data-id="${engine.id}">
+        <option value="2">2 s</option>
+        <option value="1">1 s</option>
+        <option value="0.5" selected>0.5 s</option>
+        <option value="0.1">0.1 s</option>
+        <option value="0.05">0.05 s</option>
+      </select>
+      <input type="range" class="engine-vol" data-id="${engine.id}" min="0" max="100" value="20" title="Monitor volume">
+    </div>
+    <div class="engine-readout">
+      <span>Gain: <b class="gain-pct" style="color:${engine.color}">100%</b></span>
+      <span>Δ dB: <b class="delta-db">0.0</b></span>
+    </div>
+  `;
+
+  // Play / Stop
+  const playBtn = div.querySelector('.engine-playbtn');
+  playBtn.addEventListener('click', async () => {
+    if (engine.running) {
+      engine.stop();
+      updatePlayButton(engine.id, false);
+    } else {
+      try {
+        await engine.start();
+        updatePlayButton(engine.id, true);
+      } catch (err) {
+        alert(`Engine ${engine.id}: ${err.message}`);
+      }
     }
+  });
 
-    // Test if we can create a context
-    const testCtx = new AudioContext();
-    testCtx.close();
-    return true;
-  } catch (e) {
-    console.error('Web Audio API check failed:', e);
-    return false;
-  }
+  // Source
+  const sourceSel = div.querySelector('.engine-source');
+  sourceSel.addEventListener('change', e => {
+    engine.setSource(e.target.value).catch(err => alert(err.message));
+  });
+
+  // Duration
+  const durSel = div.querySelector('.engine-dur');
+  durSel.addEventListener('change', e => {
+    engine.setCycleDuration(parseFloat(e.target.value));
+  });
+
+  // Volume
+  const volSlider = div.querySelector('.engine-vol');
+  volSlider.addEventListener('input', e => {
+    engine.setMonitorVolume(parseInt(e.target.value));
+  });
+
+  return div;
 }
 
-/**
- * Check if WebAssembly is supported
- * @returns {boolean} - True if WebAssembly is supported
- */
-function checkWebAssemblySupport() {
-  try {
-    if (typeof WebAssembly === 'object' &&
-        typeof WebAssembly.instantiate === 'function') {
-      return true;
+function updatePlayButton(id, running) {
+  const btn = document.querySelector(`.engine-playbtn[data-id="${id}"]`);
+  if (!btn) return;
+  btn.textContent = running ? '■' : '▶';
+  btn.classList.toggle('running', running);
+}
+
+function animate() {
+  app.engines.forEach(engine => {
+    const card = document.querySelector(`.engine-card[data-id="${engine.id}"]`);
+    if (!card) return;
+
+    const preview = card.querySelector('.curve-preview');
+    const scope = card.querySelector('.engine-scope');
+
+    // Always redraw preview + playhead (static or moving)
+    drawCurvePreview(preview, engine.gainCurve, engine.color);
+    drawPlayhead(preview, engine.getCurrentPhase(), engine.gainCurve, engine.color);
+
+    if (engine.running) {
+      const { byteAfter } = engine.getAnalyserData();
+      drawScope(scope, byteAfter, engine.color);
+
+      const { dbBefore, dbAfter } = engine.getDbValues();
+      const gainPct = engine.getCurrentGainPct();
+      card.querySelector('.gain-pct').textContent = `${gainPct}%`;
+
+      const delta = (dbBefore <= -79 || dbAfter <= -79) ? 0 : (dbBefore - dbAfter);
+      card.querySelector('.delta-db').textContent = `${delta.toFixed(1)} dB`;
     }
-    throw new Error('WebAssembly not supported');
-  } catch (e) {
-    console.error('WebAssembly check failed:', e);
-    return false;
-  }
+  });
+
+  app.animHandle = requestAnimationFrame(animate);
 }
 
-/**
- * Show compatibility warning if required APIs are not supported
- */
-function showCompatibilityWarning() {
-  const unsupported = [];
-
-  if (!checkWebAudioSupport()) {
-    unsupported.push('Web Audio API');
-  }
-
-  if (!checkWebAssemblySupport()) {
-    unsupported.push('WebAssembly');
-  }
-
-  if (unsupported.length > 0) {
-    const warningContainer = document.createElement('div');
-    warningContainer.style.cssText = `
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      background: #ff8a3d;
-      color: #1a1000;
-      padding: 15px;
-      border-radius: 8px;
-      max-width: 300px;
-      z-index: 1000;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-    `;
-    warningContainer.innerHTML = `
-      <h3 style="margin: 0 0 10px 0;">⚠️ Compatibility Warning</h3>
-      <p style="margin: 0;">The following features are not supported in your browser:</p>
-      <ul style="margin: 10px 0; padding-left: 20px;">
-        ${unsupported.map(feature => `<li>${feature}</li>`).join('')}
-      </ul>
-      <p style="margin: 0; font-size: 11px;">Some functionality may be limited.</p>
-      <button onclick="this.parentElement.remove()" style="
-        background: #1a1000;
-        color: white;
-        border: none;
-        padding: 5px 10px;
-        border-radius: 4px;
-        cursor: pointer;
-        margin-top: 10px;
-        font-family: inherit;
-      ">Dismiss</button>
-    `;
-    document.body.appendChild(warningContainer);
-  }
-}
-
-// Initialize the application when the DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-  showCompatibilityWarning();
-  initApp();
+// Cleanup
+window.addEventListener('beforeunload', () => {
+  if (app.animHandle) cancelAnimationFrame(app.animHandle);
+  app.engines.forEach(e => e.cleanup());
+  if (app.audioCtx) app.audioCtx.close();
 });
 
-// Export for debugging
-window.GAIN_CURVE_LAB = {
-  appState,
-  initApp,
-  checkWebAudioSupport,
-  checkWebAssemblySupport
-};
+document.addEventListener('DOMContentLoaded', init);
