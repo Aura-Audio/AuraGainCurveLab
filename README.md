@@ -1,13 +1,10 @@
 # AuraGainCurveLab
 
-20-engine gain curve demonstration rack. Each engine applies a unique mathematical gain curve to an audio source (tone, microphone, or noise) and visualizes the result in real time.
-
-- main - https://auragaincurvelab.pages.dev/
-- v1 - https://d9ec5113.auragaincurvelab.pages.dev/
+50-engine gain curve demonstration rack. Each engine applies a unique mathematical gain curve to an audio source (tone, microphone, or noise) and visualizes the result in real time.
 
 ## Architecture
 - `wasm.js` — DSP module with WASM + JS fallback
-- `gain-curves.js` — 20 unique curve definitions
+- `gain-curves.js` — 50 unique curve definitions
 - `engine.js` — Self-contained `AudioEngine` class per track
 - `visualizer.js` — Canvas drawing utilities
 - `main.js` — Engine manager & UI generator

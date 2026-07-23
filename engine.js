@@ -4,7 +4,7 @@
 
 import { createNoiseBuffer, dbFromBuffer } from './wasm.js';
 
-const MIN_CYCLE_DURATION = 0.05;
+const MIN_CYCLE_DURATION = 0.001;
 
 export class AudioEngine {
   constructor(config, sharedAudioCtx) {

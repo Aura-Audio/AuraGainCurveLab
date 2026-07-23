@@ -67,8 +67,8 @@ async function init() {
 
   animate();
   app.initialized = true;
-  updateGlobalStatus('Idle · 20 engines ready');
-  console.log('AuraGainCurveLab — 20 engines ready');
+  updateGlobalStatus('Idle · 50 engines ready');
+  console.log('AuraGainCurveLab — 50 engines ready');
 }
 
 function setupMasterControls() {
@@ -187,6 +187,9 @@ function buildCard(engine) {
         <option value="0.5" selected>0.5 s</option>
         <option value="0.1">0.1 s</option>
         <option value="0.05">0.05 s</option>
+        <option value="0.01">0.01 s</option>
+        <option value="0.005">0.005 s</option>
+        <option value="0.001">0.001 s</option>
       </select>
       <input type="range" class="engine-vol" data-id="${engine.id}" min="0" max="100" value="20" title="Monitor volume">
     </div>
