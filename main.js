@@ -1,5 +1,5 @@
 /**
- * Main Entry Point for GAIN CURVE LAB
+ * Main Entry Point for GAIN CURVE LAB.
  * Initializes the application and coordinates between modules.
  * @module main
  */
