@@ -12,7 +12,6 @@ import {
   toggleEngine,
   isRunning,
   setMonitorVolume,
-  setCurrentGainPct,
   updateOscillator,
   cleanup as cleanupAudio
 } from './audio.js';
@@ -60,16 +59,16 @@ let uiState = {
 export async function initUI() {
   // Cache DOM elements
   cacheDomElements();
-  
+
   // Setup event listeners
   setupEventListeners();
-  
+
   // Load WASM module
   await loadWasmModule();
-  
+
   // Initialize visualizer
   initVisualizer();
-  
+
   // Fit canvases
   fitAllCanvases();
   drawRamp();
@@ -109,32 +108,32 @@ function setupEventListeners() {
   if (elements.sourceButtons) {
     elements.sourceButtons.addEventListener('click', handleSourceButtonClick);
   }
-  
+
   // Duration buttons
   if (elements.durationButtons) {
     elements.durationButtons.addEventListener('click', handleDurationButtonClick);
   }
-  
+
   // Play button
   if (elements.playBtn) {
     elements.playBtn.addEventListener('click', handlePlayButtonClick);
   }
-  
+
   // Monitor slider
   if (elements.monitorSlider) {
     elements.monitorSlider.addEventListener('input', handleMonitorSliderInput);
   }
-  
+
   // Frequency slider
   if (elements.freqSlider) {
     elements.freqSlider.addEventListener('input', handleFreqSliderInput);
   }
-  
+
   // Waveform select
   if (elements.waveformSelect) {
     elements.waveformSelect.addEventListener('change', handleWaveformChange);
   }
-  
+
   // Keyboard shortcuts
   document.addEventListener('keydown', handleKeyDown);
 }
@@ -144,12 +143,12 @@ function setupEventListeners() {
  */
 async function loadWasmModule() {
   if (uiState.wasmReady || uiState.wasmLoading) return;
-  
+
   uiState.wasmLoading = true;
   setStatus('loading WASM...', false);
-  
+
   try {
-    // Load WASM module (imported from main.js)
+    // Use globally available WASM loader
     if (window.loadDspModule) {
       await window.loadDspModule();
     }
@@ -186,22 +185,22 @@ function initVisualizer() {
 async function handleSourceButtonClick(e) {
   const btn = e.target.closest('button[data-source]');
   if (!btn) return;
-  
+
   const source = btn.dataset.source;
-  
+
   // Validate source
   const validSources = ['mic', 'tone', 'white', 'pink', 'brown'];
   if (!validSources.includes(source)) {
     showError(`Invalid source: ${source}`);
     return;
   }
-  
+
   // Update active button
   updateActiveButton(elements.sourceButtons, btn);
-  
+
   // Show/hide tone controls
   toggleToneControls(source === 'tone');
-  
+
   // If running, switch source
   if (isRunning()) {
     try {
@@ -211,8 +210,8 @@ async function handleSourceButtonClick(e) {
       showError(err.message);
       // Revert to previous source
       const currentSource = getCurrentSourceType();
-      updateActiveButton(elements.sourceButtons, 
-        elements.sourceButtons.querySelector(`button[data-source="${currentSource}"]`));
+      updateActiveButton(elements.sourceButtons,
+        elements.sourceButtons.querySelector(`button[data-source=\"${currentSource}\"]`));
     }
   }
 }
@@ -224,18 +223,18 @@ async function handleSourceButtonClick(e) {
 function handleDurationButtonClick(e) {
   const btn = e.target.closest('button[data-dur]');
   if (!btn) return;
-  
+
   const duration = parseFloat(btn.dataset.dur);
-  
+
   // Validate duration
   if (isNaN(duration) || duration <= 0) {
     showError(`Invalid duration: ${btn.dataset.dur}`);
     return;
   }
-  
+
   // Update active button
   updateActiveButton(elements.durationButtons, btn);
-  
+
   // Set duration
   setCycleDuration(duration);
 }
@@ -246,7 +245,7 @@ function handleDurationButtonClick(e) {
 async function handlePlayButtonClick() {
   try {
     const newRunningState = await toggleEngine();
-    
+
     if (newRunningState) {
       elements.playBtn.textContent = '■ STOP ENGINE';
       elements.playBtn.classList.add('on');
@@ -269,7 +268,7 @@ async function handlePlayButtonClick() {
  */
 function handleMonitorSliderInput() {
   if (!elements.monitorSlider || !elements.monitorVal) return;
-  
+
   const volume = parseInt(elements.monitorSlider.value);
   elements.monitorVal.textContent = `${volume}%`;
   setMonitorVolume(volume);
@@ -280,10 +279,10 @@ function handleMonitorSliderInput() {
  */
 function handleFreqSliderInput() {
   if (!elements.freqSlider || !elements.freqVal) return;
-  
+
   const freq = parseInt(elements.freqSlider.value);
   elements.freqVal.textContent = `${freq} Hz`;
-  
+
   // Update oscillator if tone is active
   if (getCurrentSourceType() === 'tone' && elements.waveformSelect) {
     updateOscillator(elements.waveformSelect.value, freq);
@@ -295,9 +294,9 @@ function handleFreqSliderInput() {
  */
 function handleWaveformChange() {
   if (!elements.waveformSelect) return;
-  
+
   const waveform = elements.waveformSelect.value;
-  
+
   // Update oscillator if tone is active
   if (getCurrentSourceType() === 'tone' && elements.freqSlider) {
     updateOscillator(waveform, parseInt(elements.freqSlider.value));
@@ -311,13 +310,13 @@ function handleWaveformChange() {
 function handleKeyDown(e) {
   // Ignore if typing in an input
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-  
+
   // Space: Toggle play/pause
   if (e.code === 'Space' || e.key === ' ') {
     e.preventDefault();
     handlePlayButtonClick();
   }
-  
+
   // M: Toggle microphone
   if (e.key === 'm' || e.key === 'M') {
     const micBtn = elements.sourceButtons?.querySelector('button[data-source="mic"]');
@@ -325,7 +324,7 @@ function handleKeyDown(e) {
       micBtn.click();
     }
   }
-  
+
   // T: Toggle tone
   if (e.key === 't' || e.key === 'T') {
     const toneBtn = elements.sourceButtons?.querySelector('button[data-source="tone"]');
@@ -342,7 +341,7 @@ function handleKeyDown(e) {
  */
 function updateActiveButton(container, activeBtn) {
   if (!container) return;
-  
+
   container.querySelectorAll('.btn').forEach(btn => {
     btn.classList.remove('active');
   });
@@ -394,7 +393,7 @@ export function showError(message) {
 export function cleanup() {
   cleanupAudio();
   cleanupVisualizer();
-  
+
   // Remove event listeners
   if (elements.sourceButtons) {
     elements.sourceButtons.removeEventListener('click', handleSourceButtonClick);
@@ -414,7 +413,7 @@ export function cleanup() {
   if (elements.waveformSelect) {
     elements.waveformSelect.removeEventListener('change', handleWaveformChange);
   }
-  
+
   document.removeEventListener('keydown', handleKeyDown);
 }
 
