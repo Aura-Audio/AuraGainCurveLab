@@ -3,18 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:">
   <title>GAIN CURVE LAB — Scale Demonstrator</title>
-  
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-  
-  <!-- Stylesheet -->
   <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
   <div class="wrap">
     <header>
@@ -123,13 +118,12 @@
     </footer>
   </div>
 
-  <!-- Load WASM module -->
   <script type="module">
-    import { loadDspModule } from './wasm.js';
+    // Make WASM loader available globally for UI module
+    import { loadDspModule, WASM_CONFIG } from './wasm.js';
     window.loadDspModule = loadDspModule;
+    window.WASM_CONFIG = WASM_CONFIG;
   </script>
-  
-  <!-- Main application -->
   <script type="module" src="main.js"></script>
 </body>
 </html>
