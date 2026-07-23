@@ -1,435 +1,230 @@
 /**
  * Audio Module for GAIN CURVE LAB
- * Handles Web Audio API setup, source management, and gain automation.
+ * Manages the shared AudioContext and master bus, and owns the rack of
+ * Engine instances (one per track). Previously this module wrapped a single
+ * scaler; that scaler is now the Engine class (see engine.js), and this
+ * module's job is to build, run, and report on many of them at once.
  * @module audio
  */
 
-import { createNoiseBuffer, dbFromBuffer, WASM_CONFIG } from './wasm.js';
+import { Engine } from './engine.js';
+import { dbFromBuffer, WASM_CONFIG } from './wasm.js';
 
 /**
- * Audio Context and Nodes
+ * Shared audio graph
  */
 let audioCtx = null;
-let gainBeforeNode = null;
-let analyserBefore = null;
-let gainAfterNode = null;
-let analyserAfter = null;
+let masterBus = null;
+let compressor = null;
 let monitorGainNode = null;
-let sourceNode = null;
-let micStream = null;
 
 /**
- * Audio State
+ * Rack state
  */
-let currentSourceType = 'tone';
-let cycleDuration = 0.5;
-let segmentT0 = 0;
+let engines = [];
 let schedulerHandle = null;
 let running = false;
+let inspectedId = 1;
 
 /**
- * Buffer for analyser data
+ * 20 distinct track configurations. Each varies source/waveform/frequency,
+ * cycle duration, gain floor, ramp curve shape, and stereo position, so no
+ * two engines behave or sound alike.
  */
-const bufBefore = new Float32Array(WASM_CONFIG.BUFFER_SIZE);
-const bufAfter = new Float32Array(WASM_CONFIG.BUFFER_SIZE);
-const byteBefore = new Uint8Array(WASM_CONFIG.BUFFER_SIZE);
-const byteAfter = new Uint8Array(WASM_CONFIG.BUFFER_SIZE);
+export const RACK_CONFIGS = [
+  { id: 1,  label: 'T-01 SINE 110',    sourceType: 'tone',  waveform: 'sine',     frequency: 110,  cycleDuration: 2.0,  minGain: 0.01,  curve: 'linear',      pan: -1.0 },
+  { id: 2,  label: 'T-02 SINE 165',    sourceType: 'tone',  waveform: 'sine',     frequency: 165,  cycleDuration: 1.0,  minGain: 0.01,  curve: 'exponential', pan: -0.9 },
+  { id: 3,  label: 'T-03 SQUARE 220',  sourceType: 'tone',  waveform: 'square',   frequency: 220,  cycleDuration: 0.5,  minGain: 0.05,  curve: 'linear',      pan: -0.8 },
+  { id: 4,  label: 'T-04 SQUARE 330',  sourceType: 'tone',  waveform: 'square',   frequency: 330,  cycleDuration: 0.25, minGain: 0.05,  curve: 'eased',       pan: -0.7 },
+  { id: 5,  label: 'T-05 SAW 275',     sourceType: 'tone',  waveform: 'sawtooth', frequency: 275,  cycleDuration: 0.75, minGain: 0.02,  curve: 'linear',      pan: -0.6 },
+  { id: 6,  label: 'T-06 SAW 440',     sourceType: 'tone',  waveform: 'sawtooth', frequency: 440,  cycleDuration: 1.5,  minGain: 0.02,  curve: 'exponential', pan: -0.5 },
+  { id: 7,  label: 'T-07 TRI 330',     sourceType: 'tone',  waveform: 'triangle', frequency: 330,  cycleDuration: 0.1,  minGain: 0.1,   curve: 'linear',      pan: -0.4 },
+  { id: 8,  label: 'T-08 TRI 550',     sourceType: 'tone',  waveform: 'triangle', frequency: 550,  cycleDuration: 0.4,  minGain: 0.1,   curve: 'eased',       pan: -0.3 },
+  { id: 9,  label: 'N-09 WHITE',       sourceType: 'white', cycleDuration: 1.0,  minGain: 0.01,  curve: 'linear',      pan: -0.2 },
+  { id: 10, label: 'N-10 WHITE FAST',  sourceType: 'white', cycleDuration: 0.05, minGain: 0.01,  curve: 'random',      pan: -0.1 },
+  { id: 11, label: 'N-11 PINK',        sourceType: 'pink',  cycleDuration: 1.5,  minGain: 0.01,  curve: 'exponential', pan: 0.0  },
+  { id: 12, label: 'N-12 PINK QUICK',  sourceType: 'pink',  cycleDuration: 0.3,  minGain: 0.05,  curve: 'linear',      pan: 0.1  },
+  { id: 13, label: 'N-13 BROWN',       sourceType: 'brown', cycleDuration: 2.0,  minGain: 0.01,  curve: 'eased',       pan: 0.2  },
+  { id: 14, label: 'N-14 BROWN SHY',   sourceType: 'brown', cycleDuration: 0.6,  minGain: 0.2,   curve: 'linear',      pan: 0.3  },
+  { id: 15, label: 'T-15 SINE 660',    sourceType: 'tone',  waveform: 'sine',     frequency: 660,  cycleDuration: 0.15, minGain: 0.01,  curve: 'random',      pan: 0.4  },
+  { id: 16, label: 'T-16 SINE 880 SLOW', sourceType: 'tone', waveform: 'sine',   frequency: 880,  cycleDuration: 3.0,  minGain: 0.005, curve: 'linear',      pan: 0.5  },
+  { id: 17, label: 'T-17 SQUARE 110',  sourceType: 'tone',  waveform: 'square',   frequency: 110,  cycleDuration: 0.5,  minGain: 0.01,  curve: 'exponential', pan: 0.6  },
+  { id: 18, label: 'T-18 SAW 660',     sourceType: 'tone',  waveform: 'sawtooth', frequency: 660,  cycleDuration: 0.2,  minGain: 0.03,  curve: 'eased',       pan: 0.7  },
+  { id: 19, label: 'T-19 TRI 220',     sourceType: 'tone',  waveform: 'triangle', frequency: 220,  cycleDuration: 1.0,  minGain: 0.01,  curve: 'linear',      pan: 0.8  },
+  { id: 20, label: 'N-20 PINK GLITCH', sourceType: 'pink',  cycleDuration: 0.08, minGain: 0.01,  curve: 'random',      pan: 1.0  }
+];
 
 /**
- * Minimum cycle duration to prevent audio thread overload
- */
-const MIN_CYCLE_DURATION = 0.05;
-
-/**
- * Ensure AudioContext is created
- * @returns {AudioContext} - The audio context
+ * Ensure the shared AudioContext + master bus exist.
+ * @returns {AudioContext}
  */
 export function ensureContext() {
   if (audioCtx) return audioCtx;
-  
+
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  
-  // Setup audio nodes
-  gainBeforeNode = audioCtx.createGain();
-  gainBeforeNode.gain.value = 1.0;
-  
-  analyserBefore = audioCtx.createAnalyser();
-  analyserBefore.fftSize = WASM_CONFIG.BUFFER_SIZE;
-  gainBeforeNode.connect(analyserBefore); // Metering only
-  
-  gainAfterNode = audioCtx.createGain();
-  gainAfterNode.gain.value = 1.0;
-  
-  analyserAfter = audioCtx.createAnalyser();
-  analyserAfter.fftSize = WASM_CONFIG.BUFFER_SIZE;
-  
+
+  masterBus = audioCtx.createGain();
+  masterBus.gain.value = 1.0;
+
+  // Soft limiter: 20 concurrent tracks summed can clip even with per-track
+  // trim, so a gentle compressor sits between the bus and the listener.
+  compressor = audioCtx.createDynamicsCompressor();
+  compressor.threshold.value = -18;
+  compressor.knee.value = 20;
+  compressor.ratio.value = 12;
+  compressor.attack.value = 0.003;
+  compressor.release.value = 0.25;
+
   monitorGainNode = audioCtx.createGain();
-  monitorGainNode.gain.value = 0.35; // Default monitor volume
-  
-  gainAfterNode.connect(analyserAfter);
-  analyserAfter.connect(monitorGainNode);
+  monitorGainNode.gain.value = 0.35;
+
+  masterBus.connect(compressor);
+  compressor.connect(monitorGainNode);
   monitorGainNode.connect(audioCtx.destination);
-  
+
   return audioCtx;
 }
 
 /**
- * Connect an audio source
- * @param {string} type - Source type ('mic', 'tone', 'white', 'pink', 'brown')
- * @returns {Promise<boolean>} - Resolves with success status
+ * Build the 20-engine rack (idempotent - safe to call more than once).
+ * @returns {Engine[]}
  */
-export async function connectSource(type) {
-  // Validate source type
-  const validSources = ['mic', 'tone', 'white', 'pink', 'brown'];
-  if (!validSources.includes(type)) {
-    console.error(`Invalid source type: ${type}`);
-    return false;
-  }
-  
-  disconnectSource();
-  currentSourceType = type;
-  
-  try {
-    ensureContext();
-    
-    if (type === 'mic') {
-      try {
-        micStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false
-          }
-        });
-        sourceNode = audioCtx.createMediaStreamSource(micStream);
-      } catch (e) {
-        console.error('Microphone access error:', e);
-        throw new Error(`Microphone access was denied or is unavailable: ${e.message}`);
-      }
-    } else if (type === 'tone') {
-      const osc = audioCtx.createOscillator();
-      osc.type = 'sine'; // Default waveform
-      osc.frequency.value = 440; // Default frequency
-      osc.start();
-      sourceNode = osc;
-    } else {
-      // Noise types
-      const buf = createNoiseBuffer(audioCtx, type);
-      if (!buf) {
-        throw new Error(`Failed to create ${type} noise buffer`);
-      }
-      const node = audioCtx.createBufferSource();
-      node.buffer = buf;
-      node.loop = true;
-      node.start();
-      sourceNode = node;
-    }
-    
-    // Connect source to both paths
-    sourceNode.connect(gainBeforeNode);
-    sourceNode.connect(gainAfterNode);
-    
-    return true;
-  } catch (err) {
-    console.error('Failed to connect source:', err);
-    disconnectSource();
-    throw err;
-  }
+export function buildRack() {
+  if (engines.length) return engines;
+  ensureContext();
+  engines = RACK_CONFIGS.map(cfg => new Engine(audioCtx, masterBus, cfg));
+  return engines;
+}
+
+export function getEngines() {
+  return engines;
+}
+
+export function getEngine(id) {
+  return engines.find(e => e.id === id) || null;
+}
+
+export function getInspectedEngine() {
+  return getEngine(inspectedId) || engines[0] || null;
+}
+
+export function setInspectedEngine(id) {
+  if (getEngine(id)) inspectedId = id;
+}
+
+export function setEngineMuted(id, muted) {
+  const eng = getEngine(id);
+  if (eng) eng.setMuted(muted);
 }
 
 /**
- * Disconnect current audio source
+ * Set the overall monitor (listening) volume - safety control, independent
+ * of each track's own gain ramp.
+ * @param {number} volume - 0-100
  */
-export function disconnectSource() {
-  if (sourceNode) {
-    try {
-      sourceNode.disconnect();
-    } catch (e) {
-      console.warn('Error disconnecting source node:', e);
-    }
-    if (sourceNode.stop) {
-      try {
-        sourceNode.stop();
-      } catch (e) {
-        console.warn('Error stopping source node:', e);
-      }
-    }
-    sourceNode = null;
-  }
-  
-  if (micStream) {
-    try {
-      micStream.getTracks().forEach(track => track.stop());
-    } catch (e) {
-      console.warn('Error stopping microphone tracks:', e);
-    }
-    micStream = null;
-  }
+export function setMonitorVolume(volume) {
+  const clamped = Math.max(0, Math.min(100, volume));
+  if (monitorGainNode) monitorGainNode.gain.value = clamped / 100;
 }
 
-/**
- * Reset the gain ramp baseline
- */
-export function resetRampBaseline() {
-  if (!audioCtx) return;
-  
-  const now = audioCtx.currentTime;
-  if (gainAfterNode) {
-    gainAfterNode.gain.cancelScheduledValues(now);
-    gainAfterNode.gain.setValueAtTime(1.0, now);
-  }
-  segmentT0 = now;
-}
-
-/**
- * Set the cycle duration for gain ramp
- * @param {number} duration - Cycle duration in seconds
- */
-export function setCycleDuration(duration) {
-  // Enforce minimum duration
-  cycleDuration = Math.max(MIN_CYCLE_DURATION, parseFloat(duration));
-  if (audioCtx) {
-    resetRampBaseline();
-  }
-}
-
-/**
- * Get current cycle duration
- * @returns {number} - Current cycle duration
- */
-export function getCycleDuration() {
-  return cycleDuration;
-}
-
-/**
- * Get current source type
- * @returns {string} - Current source type
- */
-export function getCurrentSourceType() {
-  return currentSourceType;
-}
-
-/**
- * Start the audio engine
- * @returns {Promise<boolean>} - Resolves with success status
- */
-export async function startEngine() {
-  if (running) return true;
-  
-  try {
-    ensureContext();
-    
-    // Handle suspended context (common on mobile)
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
-    }
-    
-    const success = await connectSource(currentSourceType);
-    if (!success) return false;
-    
-    resetRampBaseline();
-    running = true;
-    
-    // Start the scheduler
-    schedulerTick();
-    schedulerHandle = setInterval(schedulerTick, 25);
-    
-    return true;
-  } catch (err) {
-    console.error('Failed to start engine:', err);
-    stopEngine();
-    throw err;
-  }
-}
-
-/**
- * Stop the audio engine
- */
-export function stopEngine() {
-  running = false;
-  
-  if (schedulerHandle) {
-    clearInterval(schedulerHandle);
-    schedulerHandle = null;
-  }
-  
-  disconnectSource();
-}
-
-/**
- * Toggle engine state
- * @returns {Promise<boolean>} - Resolves with new running state
- */
-export async function toggleEngine() {
-  if (running) {
-    stopEngine();
-    return false;
-  } else {
-    const success = await startEngine();
-    return success;
-  }
-}
-
-/**
- * Is the engine running?
- * @returns {boolean} - Current running state
- */
 export function isRunning() {
   return running;
 }
 
 /**
- * Get audio analyser data
- * @returns {Object} - Object containing analyser data
+ * Start every engine in the rack and the shared scheduler.
+ * @returns {Promise<boolean>}
  */
-export function getAnalyserData() {
-  if (!audioCtx || !analyserBefore || !analyserAfter) {
-    return {
-      bufBefore: new Float32Array(0),
-      bufAfter: new Float32Array(0),
-      byteBefore: new Uint8Array(0),
-      byteAfter: new Uint8Array(0)
-    };
-  }
-  
-  analyserBefore.getFloatTimeDomainData(bufBefore);
-  analyserAfter.getFloatTimeDomainData(bufAfter);
-  analyserBefore.getByteTimeDomainData(byteBefore);
-  analyserAfter.getByteTimeDomainData(byteAfter);
-  
-  return {
-    bufBefore,
-    bufAfter,
-    byteBefore,
-    byteAfter
-  };
-}
+export async function startAll() {
+  if (running) return true;
 
-/**
- * Calculate dB values from analyser data
- * @returns {Object} - Object containing dB values
- */
-export function getDbValues() {
-  const { bufBefore, bufAfter } = getAnalyserData();
-  
-  const dbB = dbFromBuffer(bufBefore, WASM_CONFIG.RMS_BEFORE_OFFSET);
-  const dbA = dbFromBuffer(bufAfter, WASM_CONFIG.RMS_AFTER_OFFSET);
-  
-  return {
-    dbBefore: dbB <= -79 ? -Infinity : dbB,
-    dbAfter: dbA <= -79 ? -Infinity : dbA
-  };
-}
+  try {
+    ensureContext();
+    buildRack();
 
-/**
- * Get current gain percentage based on cycle phase
- * @returns {number} - Current gain percentage (0-100)
- */
-export function getCurrentGainPct() {
-  if (!audioCtx || !running) return 100;
-  
-  const now = audioCtx.currentTime;
-  const elapsed = (now - segmentT0) % cycleDuration;
-  const phase = elapsed / cycleDuration;
-  const gain = 1.0 + (0.01 - 1.0) * phase;
-  
-  return Math.round(gain * 100);
-}
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
 
-/**
- * Get the current phase of the gain cycle
- * @returns {number} - Phase (0-1)
- */
-export function getCurrentPhase() {
-  if (!audioCtx || !running) return 0;
-  
-  const now = audioCtx.currentTime;
-  return ((now - segmentT0) % cycleDuration) / cycleDuration;
-}
+    engines.forEach(e => e.start());
+    running = true;
 
-/**
- * Update oscillator properties (for tone source)
- * @param {string} waveform - Waveform type
- * @param {number} frequency - Frequency in Hz
- */
-export function updateOscillator(waveform, frequency) {
-  if (sourceNode && currentSourceType === 'tone' && sourceNode.type) {
-    sourceNode.type = waveform;
-    sourceNode.frequency.value = frequency;
+    schedulerTick();
+    schedulerHandle = setInterval(schedulerTick, 25);
+
+    return true;
+  } catch (err) {
+    console.error('Failed to start rack:', err);
+    stopAll();
+    throw err;
   }
 }
 
-/**
- * Set monitor volume
- * @param {number} volume - Volume percentage (0-100)
- */
-export function setMonitorVolume(volume) {
-  const clampedVolume = Math.max(0, Math.min(100, volume));
-  if (monitorGainNode) {
-    monitorGainNode.gain.value = clampedVolume / 100;
+/** Stop every engine in the rack and the shared scheduler. */
+export function stopAll() {
+  running = false;
+
+  if (schedulerHandle) {
+    clearInterval(schedulerHandle);
+    schedulerHandle = null;
   }
+
+  engines.forEach(e => e.stop());
 }
 
 /**
- * Scheduler tick for gain automation
+ * @returns {Promise<boolean>} new running state
  */
+export async function toggleAll() {
+  if (running) {
+    stopAll();
+    return false;
+  }
+  return await startAll();
+}
+
+/** One shared scheduler tick drives all 20 engines - not 20 separate timers. */
 function schedulerTick() {
-  if (!audioCtx || !running) return;
-  
+  if (!running) return;
   const lookahead = 0.25;
-  const now = audioCtx.currentTime;
-  
-  // Calculate how many cycles have passed since segmentT0
-  let n = Math.floor((now - segmentT0) / cycleDuration);
-  let nextStart = segmentT0 + n * cycleDuration;
-  
-  // Schedule gain changes for upcoming cycles
-  while (nextStart < now + lookahead) {
-    if (nextStart >= now - 0.001) {
-      if (gainAfterNode) {
-        gainAfterNode.gain.setValueAtTime(1.0, nextStart);
-        gainAfterNode.gain.linearRampToValueAtTime(0.01, nextStart + cycleDuration);
-      }
-    }
-    nextStart += cycleDuration;
-  }
+  engines.forEach(e => e.scheduleTick(lookahead));
 }
 
 /**
- * Clean up audio resources
+ * Read and compute meter data for a single engine, for the animation loop.
+ * @param {number} id
  */
+export function getEngineMeterData(id) {
+  const eng = getEngine(id);
+  if (!eng) return null;
+
+  eng.readMeters();
+  const dbBefore = dbFromBuffer(eng.bufBefore, WASM_CONFIG.RMS_BEFORE_OFFSET);
+  const dbAfter = dbFromBuffer(eng.bufAfter, WASM_CONFIG.RMS_AFTER_OFFSET);
+
+  return {
+    dbBefore: dbBefore <= -79 ? -Infinity : dbBefore,
+    dbAfter: dbAfter <= -79 ? -Infinity : dbAfter,
+    gainPct: Math.round(eng.getCurrentGain() * 100),
+    phase: eng.getPhase(),
+    byteBefore: eng.byteBefore,
+    byteAfter: eng.byteAfter
+  };
+}
+
+/** Clean up all audio resources (called on page unload). */
 export function cleanup() {
-  stopEngine();
-  
+  stopAll();
+
   if (audioCtx) {
-    try {
-      audioCtx.close();
-    } catch (e) {
-      console.warn('Error closing audio context:', e);
-    }
+    try { audioCtx.close(); } catch (e) { /* already closed */ }
     audioCtx = null;
   }
-  
-  // Reset all nodes
-  gainBeforeNode = null;
-  analyserBefore = null;
-  gainAfterNode = null;
-  analyserAfter = null;
+
+  masterBus = null;
+  compressor = null;
   monitorGainNode = null;
-  sourceNode = null;
-  micStream = null;
+  engines = [];
 }
 
-// Clean up on page unload
 window.addEventListener('beforeunload', cleanup);
-
-export {
-  audioCtx,
-  gainBeforeNode,
-  analyserBefore,
-  gainAfterNode,
-  analyserAfter,
-  monitorGainNode,
-  sourceNode,
-  micStream
-};

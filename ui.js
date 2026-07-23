@@ -1,261 +1,176 @@
 /**
  * UI Module for GAIN CURVE LAB
- * Handles user interactions, UI state, and DOM updates.
+ * Builds the 20-track rack, wires user interaction, and reports status.
  * @module ui
  */
 
+import { loadDspModule } from './wasm.js';
 import {
-  connectSource,
-  setCycleDuration,
-  getCycleDuration,
-  getCurrentSourceType,
-  toggleEngine,
+  RACK_CONFIGS,
+  buildRack,
+  toggleAll,
   isRunning,
   setMonitorVolume,
-  updateOscillator,
+  setEngineMuted,
+  setInspectedEngine,
   cleanup as cleanupAudio
 } from './audio.js';
+import {
+  initVisualizer,
+  fitAllCanvases,
+  drawRamp,
+  pauseAnimation,
+  resumeAnimation,
+  cleanup as cleanupVisualizer
+} from './visualizer.js';
 
-import { fitAllCanvases, drawRamp, pauseAnimation, resumeAnimation, cleanup as cleanupVisualizer } from './visualizer.js';
-
-/**
- * DOM Elements
- */
 const elements = {
-  sourceButtons: null,
-  toneControls: null,
-  durationButtons: null,
   playBtn: null,
   statusText: null,
   monitorSlider: null,
   monitorVal: null,
-  freqSlider: null,
-  freqVal: null,
-  waveformSelect: null,
   errorMessage: null,
+  trackRack: null,
   scopeBeforeCanvas: null,
   scopeAfterCanvas: null,
   rampCanvas: null,
-  barBefore: null,
-  barAfter: null,
-  dbBefore: null,
-  dbAfter: null,
-  deltaDb: null,
-  gainPct: null
+  detailBarBefore: null,
+  detailBarAfter: null,
+  detailDbBefore: null,
+  detailDbAfter: null,
+  detailDeltaDb: null,
+  detailGainPct: null,
+  detailLabel: null
 };
 
-/**
- * UI State
- */
-let uiState = {
-  wasmReady: false,
-  wasmLoading: false,
-  wasmError: null
-};
+/** One entry per track row, handed to the visualizer for live updates. */
+const trackRows = [];
 
-/**
- * Initialize UI module
- */
+let wasmReady = false;
+
 export async function initUI() {
-  // Cache DOM elements
   cacheDomElements();
-
-  // Setup event listeners
+  buildTrackRows();
   setupEventListeners();
-
-  // Load WASM module
   await loadWasmModule();
 
-  // Initialize visualizer
-  initVisualizer();
-
-  // Fit canvases
-  fitAllCanvases();
-  drawRamp();
+  initVisualizer({
+    trackRows,
+    scopeBeforeCanvas: elements.scopeBeforeCanvas,
+    scopeAfterCanvas: elements.scopeAfterCanvas,
+    rampCanvas: elements.rampCanvas,
+    detailBarBefore: elements.detailBarBefore,
+    detailBarAfter: elements.detailBarAfter,
+    detailDbBefore: elements.detailDbBefore,
+    detailDbAfter: elements.detailDbAfter,
+    detailDeltaDb: elements.detailDeltaDb,
+    detailGainPct: elements.detailGainPct,
+    detailLabel: elements.detailLabel
+  });
 }
 
-/**
- * Cache all DOM elements
- */
 function cacheDomElements() {
-  elements.sourceButtons = document.getElementById('sourceButtons');
-  elements.toneControls = document.getElementById('toneControls');
-  elements.durationButtons = document.getElementById('durationButtons');
   elements.playBtn = document.getElementById('playBtn');
   elements.statusText = document.getElementById('statusText');
   elements.monitorSlider = document.getElementById('monitorSlider');
   elements.monitorVal = document.getElementById('monitorVal');
-  elements.freqSlider = document.getElementById('freqSlider');
-  elements.freqVal = document.getElementById('freqVal');
-  elements.waveformSelect = document.getElementById('waveformSelect');
   elements.errorMessage = document.getElementById('errorMessage');
+  elements.trackRack = document.getElementById('trackRack');
   elements.scopeBeforeCanvas = document.getElementById('scopeBefore');
   elements.scopeAfterCanvas = document.getElementById('scopeAfter');
   elements.rampCanvas = document.getElementById('rampCanvas');
-  elements.barBefore = document.getElementById('barBefore');
-  elements.barAfter = document.getElementById('barAfter');
-  elements.dbBefore = document.getElementById('dbBefore');
-  elements.dbAfter = document.getElementById('dbAfter');
-  elements.deltaDb = document.getElementById('deltaDb');
-  elements.gainPct = document.getElementById('gainPct');
+  elements.detailBarBefore = document.getElementById('detailBarBefore');
+  elements.detailBarAfter = document.getElementById('detailBarAfter');
+  elements.detailDbBefore = document.getElementById('detailDbBefore');
+  elements.detailDbAfter = document.getElementById('detailDbAfter');
+  elements.detailDeltaDb = document.getElementById('detailDeltaDb');
+  elements.detailGainPct = document.getElementById('detailGainPct');
+  elements.detailLabel = document.getElementById('detailLabel');
 }
 
-/**
- * Setup all event listeners
- */
-function setupEventListeners() {
-  // Source buttons
-  if (elements.sourceButtons) {
-    elements.sourceButtons.addEventListener('click', handleSourceButtonClick);
-  }
+/** Build one compact row per engine config and inject them into the rack. */
+function buildTrackRows() {
+  if (!elements.trackRack) return;
 
-  // Duration buttons
-  if (elements.durationButtons) {
-    elements.durationButtons.addEventListener('click', handleDurationButtonClick);
-  }
+  RACK_CONFIGS.forEach((cfg, index) => {
+    const row = document.createElement('div');
+    row.className = 'track-row' + (index === 0 ? ' inspected' : '');
+    row.dataset.id = String(cfg.id);
 
-  // Play button
-  if (elements.playBtn) {
-    elements.playBtn.addEventListener('click', handlePlayButtonClick);
-  }
+    const sourceTag = cfg.sourceType === 'tone'
+      ? `${cfg.waveform} ${cfg.frequency}Hz`
+      : `${cfg.sourceType} noise`;
 
-  // Monitor slider
-  if (elements.monitorSlider) {
-    elements.monitorSlider.addEventListener('input', handleMonitorSliderInput);
-  }
+    row.innerHTML = `
+      <div class="track-label">
+        <span class="track-name">${cfg.label}</span>
+        <span class="track-tag">${sourceTag} · ${cfg.cycleDuration}s · ${cfg.curve}</span>
+      </div>
+      <div class="track-meters">
+        <div class="db-bar-track mini before"><div class="db-bar-fill" data-role="barBefore"></div></div>
+        <div class="db-bar-track mini after"><div class="db-bar-fill" data-role="barAfter"></div></div>
+      </div>
+      <div class="track-gain" data-role="gainPct">100%</div>
+      <button class="mute-btn" type="button" data-role="muteBtn" title="Mute this track">M</button>
+    `;
 
-  // Frequency slider
-  if (elements.freqSlider) {
-    elements.freqSlider.addEventListener('input', handleFreqSliderInput);
-  }
+    const barBefore = row.querySelector('[data-role="barBefore"]');
+    const barAfter = row.querySelector('[data-role="barAfter"]');
+    const gainPct = row.querySelector('[data-role="gainPct"]');
+    const muteBtn = row.querySelector('[data-role="muteBtn"]');
 
-  // Waveform select
-  if (elements.waveformSelect) {
-    elements.waveformSelect.addEventListener('change', handleWaveformChange);
-  }
+    muteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const muted = !muteBtn.classList.contains('muted');
+      muteBtn.classList.toggle('muted', muted);
+      setEngineMuted(cfg.id, muted);
+    });
 
-  // Keyboard shortcuts
-  document.addEventListener('keydown', handleKeyDown);
-}
+    row.addEventListener('click', () => {
+      elements.trackRack.querySelectorAll('.track-row').forEach(r => r.classList.remove('inspected'));
+      row.classList.add('inspected');
+      setInspectedEngine(cfg.id);
+    });
 
-/**
- * Load WASM module
- */
-async function loadWasmModule() {
-  if (uiState.wasmReady || uiState.wasmLoading) return;
-
-  uiState.wasmLoading = true;
-  setStatus('loading WASM...', false);
-
-  try {
-    // Use globally available WASM loader
-    if (window.loadDspModule) {
-      await window.loadDspModule();
-    }
-    uiState.wasmReady = true;
-    uiState.wasmError = null;
-    setStatus('idle · wasm ready', false);
-  } catch (err) {
-    uiState.wasmReady = false;
-    uiState.wasmError = err;
-    console.error('WASM loading error:', err);
-    setStatus('idle · wasm failed (JS fallback active)', false);
-    showError('WASM module failed to load. Using JavaScript fallback.');
-  } finally {
-    uiState.wasmLoading = false;
-  }
-}
-
-/**
- * Initialize visualizer with DOM elements
- */
-function initVisualizer() {
-  import('./visualizer.js').then(({ initVisualizer }) => {
-    initVisualizer(elements);
-  }).catch(err => {
-    console.error('Failed to initialize visualizer:', err);
-    showError('Visualizer initialization failed.');
+    elements.trackRack.appendChild(row);
+    trackRows.push({ id: cfg.id, barBefore, barAfter, gainPct });
   });
 }
 
-/**
- * Handle source button click
- * @param {Event} e - Click event
- */
-async function handleSourceButtonClick(e) {
-  const btn = e.target.closest('button[data-source]');
-  if (!btn) return;
+function setupEventListeners() {
+  if (elements.playBtn) elements.playBtn.addEventListener('click', handlePlayButtonClick);
+  if (elements.monitorSlider) elements.monitorSlider.addEventListener('input', handleMonitorSliderInput);
+  document.addEventListener('keydown', handleKeyDown);
+}
 
-  const source = btn.dataset.source;
-
-  // Validate source
-  const validSources = ['mic', 'tone', 'white', 'pink', 'brown'];
-  if (!validSources.includes(source)) {
-    showError(`Invalid source: ${source}`);
-    return;
-  }
-
-  // Update active button
-  updateActiveButton(elements.sourceButtons, btn);
-
-  // Show/hide tone controls
-  toggleToneControls(source === 'tone');
-
-  // If running, switch source
-  if (isRunning()) {
-    try {
-      await connectSource(source);
-      setStatus(`running · ${source}`, true);
-    } catch (err) {
-      showError(err.message);
-      // Revert to previous source
-      const currentSource = getCurrentSourceType();
-      updateActiveButton(elements.sourceButtons,
-        elements.sourceButtons.querySelector(`button[data-source=\"${currentSource}\"]`));
-    }
+async function loadWasmModule() {
+  setStatus('loading WASM...', false);
+  try {
+    await loadDspModule();
+    wasmReady = true;
+    setStatus('idle · wasm ready', false);
+  } catch (err) {
+    wasmReady = false;
+    console.error('WASM loading error:', err);
+    setStatus('idle · wasm failed (JS fallback active)', false);
+    showError('WASM module failed to load. Using JavaScript fallback.');
   }
 }
 
-/**
- * Handle duration button click
- * @param {Event} e - Click event
- */
-function handleDurationButtonClick(e) {
-  const btn = e.target.closest('button[data-dur]');
-  if (!btn) return;
-
-  const duration = parseFloat(btn.dataset.dur);
-
-  // Validate duration
-  if (isNaN(duration) || duration <= 0) {
-    showError(`Invalid duration: ${btn.dataset.dur}`);
-    return;
-  }
-
-  // Update active button
-  updateActiveButton(elements.durationButtons, btn);
-
-  // Set duration
-  setCycleDuration(duration);
-}
-
-/**
- * Handle play button click
- */
 async function handlePlayButtonClick() {
   try {
-    const newRunningState = await toggleEngine();
+    if (!isRunning()) buildRack(); // ensure engines exist before first start
+    const newRunningState = await toggleAll();
 
     if (newRunningState) {
-      elements.playBtn.textContent = '■ STOP ENGINE';
+      elements.playBtn.textContent = '■ STOP ALL';
       elements.playBtn.classList.add('on');
-      setStatus(`running · ${getCurrentSourceType()}`, true);
+      setStatus('running · 20 engines', true);
       resumeAnimation();
     } else {
-      elements.playBtn.textContent = '▶ START ENGINE';
+      elements.playBtn.textContent = '▶ START ALL';
       elements.playBtn.classList.remove('on');
       setStatus('idle', false);
-      pauseAnimation();
     }
   } catch (err) {
     showError(err.message);
@@ -263,161 +178,46 @@ async function handlePlayButtonClick() {
   }
 }
 
-/**
- * Handle monitor slider input
- */
 function handleMonitorSliderInput() {
   if (!elements.monitorSlider || !elements.monitorVal) return;
-
-  const volume = parseInt(elements.monitorSlider.value);
+  const volume = parseInt(elements.monitorSlider.value, 10);
   elements.monitorVal.textContent = `${volume}%`;
   setMonitorVolume(volume);
 }
 
-/**
- * Handle frequency slider input
- */
-function handleFreqSliderInput() {
-  if (!elements.freqSlider || !elements.freqVal) return;
-
-  const freq = parseInt(elements.freqSlider.value);
-  elements.freqVal.textContent = `${freq} Hz`;
-
-  // Update oscillator if tone is active
-  if (getCurrentSourceType() === 'tone' && elements.waveformSelect) {
-    updateOscillator(elements.waveformSelect.value, freq);
-  }
-}
-
-/**
- * Handle waveform select change
- */
-function handleWaveformChange() {
-  if (!elements.waveformSelect) return;
-
-  const waveform = elements.waveformSelect.value;
-
-  // Update oscillator if tone is active
-  if (getCurrentSourceType() === 'tone' && elements.freqSlider) {
-    updateOscillator(waveform, parseInt(elements.freqSlider.value));
-  }
-}
-
-/**
- * Handle keyboard shortcuts
- * @param {KeyboardEvent} e - Keydown event
- */
 function handleKeyDown(e) {
-  // Ignore if typing in an input
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-
-  // Space: Toggle play/pause
   if (e.code === 'Space' || e.key === ' ') {
     e.preventDefault();
     handlePlayButtonClick();
   }
-
-  // M: Toggle microphone
-  if (e.key === 'm' || e.key === 'M') {
-    const micBtn = elements.sourceButtons?.querySelector('button[data-source="mic"]');
-    if (micBtn) {
-      micBtn.click();
-    }
-  }
-
-  // T: Toggle tone
-  if (e.key === 't' || e.key === 'T') {
-    const toneBtn = elements.sourceButtons?.querySelector('button[data-source="tone"]');
-    if (toneBtn) {
-      toneBtn.click();
-    }
-  }
 }
 
-/**
- * Update active button in a button set
- * @param {HTMLElement} container - Container element
- * @param {HTMLElement} activeBtn - Button to mark as active
- */
-function updateActiveButton(container, activeBtn) {
-  if (!container) return;
-
-  container.querySelectorAll('.btn').forEach(btn => {
-    btn.classList.remove('active');
-  });
-  activeBtn.classList.add('active');
-}
-
-/**
- * Toggle tone controls visibility
- * @param {boolean} show - Whether to show tone controls
- */
-function toggleToneControls(show) {
-  if (elements.toneControls) {
-    elements.toneControls.classList.toggle('hidden', !show);
-  }
-}
-
-/**
- * Set status text
- * @param {string} text - Status text
- * @param {boolean} live - Whether status is live
- */
 export function setStatus(text, live) {
   if (elements.statusText) {
     elements.statusText.innerHTML = '<span class="dot"></span>' + text;
-    elements.statusText.classList.toggle('live', live);
+    elements.statusText.classList.toggle('live', !!live);
   }
 }
 
-/**
- * Show error message
- * @param {string} message - Error message
- */
 export function showError(message) {
   if (elements.errorMessage) {
     elements.errorMessage.textContent = message;
-    // Clear after 5 seconds
     setTimeout(() => {
-      if (elements.errorMessage) {
-        elements.errorMessage.textContent = '';
-      }
+      if (elements.errorMessage) elements.errorMessage.textContent = '';
     }, 5000);
   }
   console.error('Error:', message);
 }
 
-/**
- * Clean up UI resources
- */
 export function cleanup() {
   cleanupAudio();
   cleanupVisualizer();
-
-  // Remove event listeners
-  if (elements.sourceButtons) {
-    elements.sourceButtons.removeEventListener('click', handleSourceButtonClick);
-  }
-  if (elements.durationButtons) {
-    elements.durationButtons.removeEventListener('click', handleDurationButtonClick);
-  }
-  if (elements.playBtn) {
-    elements.playBtn.removeEventListener('click', handlePlayButtonClick);
-  }
-  if (elements.monitorSlider) {
-    elements.monitorSlider.removeEventListener('input', handleMonitorSliderInput);
-  }
-  if (elements.freqSlider) {
-    elements.freqSlider.removeEventListener('input', handleFreqSliderInput);
-  }
-  if (elements.waveformSelect) {
-    elements.waveformSelect.removeEventListener('change', handleWaveformChange);
-  }
-
+  if (elements.playBtn) elements.playBtn.removeEventListener('click', handlePlayButtonClick);
+  if (elements.monitorSlider) elements.monitorSlider.removeEventListener('input', handleMonitorSliderInput);
   document.removeEventListener('keydown', handleKeyDown);
 }
 
-// Clean up on page unload
 window.addEventListener('beforeunload', cleanup);
 
-export { elements, uiState };
+export { elements };

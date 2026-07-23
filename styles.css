@@ -466,3 +466,126 @@ footer b {
     transform: rotate(360deg);
   }
 }
+
+/* ---- Track Rack (20 engines) ---- */
+.rack-panel { margin-bottom: 18px; }
+
+.track-rack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.track-row {
+  display: grid;
+  grid-template-columns: 1fr 140px 52px 34px;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--grid);
+  border-radius: 7px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.track-row:hover { border-color: #3a4250; }
+
+.track-row.inspected {
+  border-color: var(--after);
+  background: #1c1712;
+}
+
+.track-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.track-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-tag {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.db-bar-track.mini {
+  height: 6px;
+  background: #05070a;
+  border: 1px solid var(--grid);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.db-bar-track.mini .db-bar-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0%;
+}
+
+.db-bar-track.mini.before .db-bar-fill { background: linear-gradient(90deg, var(--before-dim), var(--before)); }
+.db-bar-track.mini.after .db-bar-fill { background: linear-gradient(90deg, var(--after-dim), var(--after)); }
+
+.track-gain {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--after);
+  text-align: right;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.mute-btn {
+  background: var(--panel);
+  border: 1px solid var(--grid);
+  color: var(--text-dim);
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mute-btn:hover { border-color: #3a4250; }
+
+.mute-btn.muted {
+  background: var(--danger);
+  color: #280000;
+  border-color: var(--danger);
+}
+
+.detail-panel { margin-top: 6px; }
+.detail-panel .grouplabel span#detailLabel {
+  color: var(--after);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .track-row { grid-template-columns: 1fr 90px 44px 30px; gap: 8px; }
+  .track-tag { display: none; }
+}

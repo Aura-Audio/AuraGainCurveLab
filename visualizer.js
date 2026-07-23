@@ -1,97 +1,83 @@
 /**
  * Visualizer Module for GAIN CURVE LAB
- * Handles canvas drawing for scopes, ramp visualization, and UI updates.
+ * Draws the compact per-track meters for all 20 engines, plus a detailed
+ * before/after scope + ramp-curve view for whichever engine is "inspected".
  * @module visualizer
  */
 
-import { dbToPct, WASM_CONFIG } from './wasm.js';
-import { getAnalyserData, getDbValues, getCurrentGainPct, getCurrentPhase, isRunning } from './audio.js';
+import { dbToPct } from './wasm.js';
+import {
+  getEngineMeterData,
+  getInspectedEngine,
+  isRunning
+} from './audio.js';
 
-/**
- * Canvas elements
- */
+let trackRows = [];      // [{ id, barBefore, barAfter, gainPct }]
 let scopeBeforeCanvas = null;
 let scopeAfterCanvas = null;
 let rampCanvas = null;
+let detailBarBefore = null;
+let detailBarAfter = null;
+let detailDbBefore = null;
+let detailDbAfter = null;
+let detailDeltaDb = null;
+let detailGainPct = null;
+let detailLabel = null;
 
-/**
- * DOM elements for UI updates
- */
-let barBeforeEl = null;
-let barAfterEl = null;
-let dbBeforeEl = null;
-let dbAfterEl = null;
-let deltaDbEl = null;
-let gainPctEl = null;
-
-/**
- * Animation frame handle
- */
 let animHandle = null;
 
 /**
- * Initialize visualizer with DOM elements
- * @param {Object} elements - DOM element references
+ * Initialize visualizer with DOM references built by ui.js.
+ * @param {Object} refs
+ * @param {Array} refs.trackRows
+ * @param {HTMLCanvasElement} refs.scopeBeforeCanvas
+ * @param {HTMLCanvasElement} refs.scopeAfterCanvas
+ * @param {HTMLCanvasElement} refs.rampCanvas
+ * @param {HTMLElement} refs.detailBarBefore
+ * @param {HTMLElement} refs.detailBarAfter
+ * @param {HTMLElement} refs.detailDbBefore
+ * @param {HTMLElement} refs.detailDbAfter
+ * @param {HTMLElement} refs.detailDeltaDb
+ * @param {HTMLElement} refs.detailGainPct
+ * @param {HTMLElement} refs.detailLabel
  */
-export function initVisualizer(elements) {
-  scopeBeforeCanvas = elements.scopeBeforeCanvas;
-  scopeAfterCanvas = elements.scopeAfterCanvas;
-  rampCanvas = elements.rampCanvas;
-  barBeforeEl = elements.barBefore;
-  barAfterEl = elements.barAfter;
-  dbBeforeEl = elements.dbBefore;
-  dbAfterEl = elements.dbAfter;
-  deltaDbEl = elements.deltaDb;
-  gainPctEl = elements.gainPct;
+export function initVisualizer(refs) {
+  trackRows = refs.trackRows || [];
+  scopeBeforeCanvas = refs.scopeBeforeCanvas;
+  scopeAfterCanvas = refs.scopeAfterCanvas;
+  rampCanvas = refs.rampCanvas;
+  detailBarBefore = refs.detailBarBefore;
+  detailBarAfter = refs.detailBarAfter;
+  detailDbBefore = refs.detailDbBefore;
+  detailDbAfter = refs.detailDbAfter;
+  detailDeltaDb = refs.detailDeltaDb;
+  detailGainPct = refs.detailGainPct;
+  detailLabel = refs.detailLabel;
 
-  // Fit canvases to their containers
   fitAllCanvases();
-
-  // Draw initial ramp
   drawRamp();
-
-  // Start animation loop
   animate();
 }
 
-/**
- * Fit canvas to its container with proper DPI scaling
- * @param {HTMLCanvasElement} canvas - Canvas element to fit
- */
 function fitCanvas(canvas) {
   if (!canvas) return;
-
   const ratio = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, rect.width * ratio);
   canvas.height = Math.max(1, rect.height * ratio);
 }
 
-/**
- * Fit all canvases to their containers
- */
 export function fitAllCanvases() {
   [scopeBeforeCanvas, scopeAfterCanvas, rampCanvas].forEach(fitCanvas);
 }
 
-/**
- * Draw the scope waveform on a canvas
- * @param {HTMLCanvasElement} canvas - Canvas element to draw on
- * @param {Uint8Array} byteData - Time domain data from analyser
- * @param {string} color - Color for the waveform
- */
 function drawScope(canvas, byteData, color) {
   if (!canvas || !byteData) return;
-
   const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
+  const w = canvas.width, h = canvas.height;
   const ratio = window.devicePixelRatio || 1;
 
-  // Clear canvas
   ctx.clearRect(0, 0, w, h);
-
-  // Draw center line
   ctx.strokeStyle = '#232830';
   ctx.lineWidth = 1 * ratio;
   ctx.beginPath();
@@ -99,44 +85,36 @@ function drawScope(canvas, byteData, color) {
   ctx.lineTo(w, h / 2);
   ctx.stroke();
 
-  // Draw waveform
   ctx.strokeStyle = color;
   ctx.lineWidth = 2 * ratio;
   ctx.beginPath();
-
   const slice = w / byteData.length;
   for (let i = 0; i < byteData.length; i++) {
     const v = byteData[i] / 128.0 - 1.0;
     const y = (h / 2) + v * (h / 2) * 0.9;
     const x = i * slice;
-    if (i === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
-    }
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.stroke();
 }
 
 /**
- * Draw the gain ramp visualization
+ * Draw the gain-ramp curve for the inspected engine (shape depends on its
+ * own curve type: linear / exponential / eased / random), plus a live
+ * playhead. The bottom label reflects that engine's actual gain floor,
+ * since it differs per track (0.5% to 20% across the rack).
  */
 export function drawRamp() {
   if (!rampCanvas) return;
-
   const ctx = rampCanvas.getContext('2d');
-  const w = rampCanvas.width;
-  const h = rampCanvas.height;
+  const w = rampCanvas.width, h = rampCanvas.height;
   const ratio = window.devicePixelRatio || 1;
 
-  // Clear canvas
   ctx.clearRect(0, 0, w, h);
 
-  // Draw grid lines
   ctx.strokeStyle = '#3a4250';
   ctx.lineWidth = 1 * ratio;
   ctx.globalAlpha = 0.5;
-
   for (let gy = 0; gy <= 4; gy++) {
     const y = (h - 16 * ratio) - (gy / 4) * (h - 32 * ratio) + 8 * ratio;
     ctx.beginPath();
@@ -144,20 +122,29 @@ export function drawRamp() {
     ctx.lineTo(w, y);
     ctx.stroke();
   }
-
   ctx.globalAlpha = 1;
 
-  // Draw ramp line (100% to 1%)
+  const eng = getInspectedEngine();
+  const top = 8 * ratio;
+  const bottom = h - 16 * ratio;
+  const minGain = eng ? eng.minGain : 0.01;
+
+  // Plot the actual per-engine curve shape as a polyline.
   ctx.strokeStyle = '#ff8a3d';
   ctx.lineWidth = 2.5 * ratio;
   ctx.beginPath();
-  const top = 8 * ratio;
-  const bottom = h - 16 * ratio;
-  ctx.moveTo(0, top);
-  ctx.lineTo(w, bottom);
+  const STEPS = 80;
+  for (let i = 0; i <= STEPS; i++) {
+    const t = i / STEPS;
+    const gain = eng ? eng.sampleCurveAt(t) : (1 + (0.01 - 1) * t);
+    // Map gain (1.0 -> minGain) onto the vertical axis (top -> bottom).
+    const norm = (1.0 - gain) / (1.0 - minGain);
+    const y = top + norm * (bottom - top);
+    const x = t * w;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
   ctx.stroke();
 
-  // Draw snap-back line
   ctx.setLineDash([4 * ratio, 4 * ratio]);
   ctx.strokeStyle = '#585f6b';
   ctx.beginPath();
@@ -166,16 +153,11 @@ export function drawRamp() {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Draw playhead
-  let phase = 0;
-  if (isRunning()) {
-    phase = getCurrentPhase();
-  }
-
+  const phase = (eng && isRunning()) ? eng.getPhase() : 0;
   const px = phase * w;
-  const py = top + phase * (bottom - top);
+  const gainNow = eng ? eng.sampleCurveAt(phase) : 1.0;
+  const py = top + ((1.0 - gainNow) / (1.0 - minGain)) * (bottom - top);
 
-  // Vertical line
   ctx.strokeStyle = '#dbe2e8';
   ctx.lineWidth = 1 * ratio;
   ctx.beginPath();
@@ -183,66 +165,57 @@ export function drawRamp() {
   ctx.lineTo(px, h);
   ctx.stroke();
 
-  // Circle marker
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
   ctx.arc(px, py, 4 * ratio, 0, Math.PI * 2);
   ctx.fill();
 
-  // Labels
   ctx.fillStyle = '#6d7683';
   ctx.font = `${11 * ratio}px JetBrains Mono, monospace`;
   ctx.fillText('100%', 4 * ratio, 16 * ratio);
-  ctx.fillText('1%', w - 28 * ratio, h - 6 * ratio);
+  ctx.fillText(`${(minGain * 100).toFixed(minGain < 0.01 ? 2 : 1)}%`, w - 40 * ratio, h - 6 * ratio);
 }
 
-/**
- * Update meter bars and readouts
- */
-function updateMeters() {
-  if (!barBeforeEl || !barAfterEl || !dbBeforeEl || !dbAfterEl || !deltaDbEl || !gainPctEl) return;
-
-  const { dbBefore, dbAfter } = getDbValues();
-
-  // Update bars
-  barBeforeEl.style.width = `${dbToPct(dbBefore)}%`;
-  barAfterEl.style.width = `${dbToPct(dbAfter)}%`;
-
-  // Update readouts
-  dbBeforeEl.textContent = dbBefore <= -79 ? '−∞' : dbBefore.toFixed(1);
-  dbAfterEl.textContent = dbAfter <= -79 ? '−∞' : dbAfter.toFixed(1);
-
-  // Update delta
-  const delta = (dbBefore <= -79 || dbAfter <= -79) ? 0 : (dbBefore - dbAfter);
-  deltaDbEl.textContent = `${delta.toFixed(1)} dB`;
-
-  // Update gain percentage
-  gainPctEl.textContent = `${getCurrentGainPct()}%`;
+/** Update the compact meter row for every engine in the rack. */
+function updateTrackRows() {
+  for (const row of trackRows) {
+    const data = getEngineMeterData(row.id);
+    if (!data) continue;
+    row.barBefore.style.width = `${dbToPct(data.dbBefore)}%`;
+    row.barAfter.style.width = `${dbToPct(data.dbAfter)}%`;
+    row.gainPct.textContent = `${data.gainPct}%`;
+  }
 }
 
-/**
- * Animation loop for continuous updates
- */
+/** Update the detail panel for whichever engine is currently inspected. */
+function updateDetail() {
+  const eng = getInspectedEngine();
+  if (!eng || !detailBarBefore) return;
+
+  const data = getEngineMeterData(eng.id);
+  if (!data) return;
+
+  detailBarBefore.style.width = `${dbToPct(data.dbBefore)}%`;
+  detailBarAfter.style.width = `${dbToPct(data.dbAfter)}%`;
+  detailDbBefore.textContent = data.dbBefore <= -79 ? '−∞' : data.dbBefore.toFixed(1);
+  detailDbAfter.textContent = data.dbAfter <= -79 ? '−∞' : data.dbAfter.toFixed(1);
+
+  const delta = (data.dbBefore <= -79 || data.dbAfter <= -79) ? 0 : (data.dbBefore - data.dbAfter);
+  detailDeltaDb.textContent = `${delta.toFixed(1)} dB`;
+  detailGainPct.textContent = `${data.gainPct}%`;
+  if (detailLabel) detailLabel.textContent = `${eng.label} · ${eng.curve} · ${eng.cycleDuration}s`;
+
+  drawScope(scopeBeforeCanvas, data.byteBefore, '#4fd3c4');
+  drawScope(scopeAfterCanvas, data.byteAfter, '#ff8a3d');
+}
+
 function animate() {
-  // Update meters and scopes
-  updateMeters();
-
-  const { byteBefore, byteAfter } = getAnalyserData();
-
-  // Draw scopes
-  drawScope(scopeBeforeCanvas, byteBefore, '#4fd3c4');
-  drawScope(scopeAfterCanvas, byteAfter, '#ff8a3d');
-
-  // Draw ramp
+  updateTrackRows();
+  updateDetail();
   drawRamp();
-
-  // Continue animation loop
   animHandle = requestAnimationFrame(animate);
 }
 
-/**
- * Pause the animation loop
- */
 export function pauseAnimation() {
   if (animHandle) {
     cancelAnimationFrame(animHandle);
@@ -250,36 +223,26 @@ export function pauseAnimation() {
   }
 }
 
-/**
- * Resume the animation loop
- */
 export function resumeAnimation() {
-  if (!animHandle) {
-    animate();
-  }
+  if (!animHandle) animate();
 }
 
-/**
- * Clean up visualizer resources
- */
 export function cleanup() {
   pauseAnimation();
-
+  trackRows = [];
   scopeBeforeCanvas = null;
   scopeAfterCanvas = null;
   rampCanvas = null;
-  barBeforeEl = null;
-  barAfterEl = null;
-  dbBeforeEl = null;
-  dbAfterEl = null;
-  deltaDbEl = null;
-  gainPctEl = null;
+  detailBarBefore = null;
+  detailBarAfter = null;
+  detailDbBefore = null;
+  detailDbAfter = null;
+  detailDeltaDb = null;
+  detailGainPct = null;
+  detailLabel = null;
 }
 
-// Handle window resize
 window.addEventListener('resize', () => {
   fitAllCanvases();
   drawRamp();
 });
-
-export { animHandle };
