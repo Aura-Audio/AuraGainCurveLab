@@ -2,6 +2,10 @@
 
 50-engine gain curve demonstration rack. Each engine applies a unique mathematical gain curve to an audio source (tone, microphone, or noise) and visualizes the result in real time.
 
+- main - https://auragaincurvelab.pages.dev/
+- v1 - https://auragaincurvelab.pages.dev/
+- v2 - https://ca2574ee.auragaincurvelab.pages.dev/
+
 ## Architecture
 - `wasm.js` — DSP module with WASM + JS fallback
 - `gain-curves.js` — 50 unique curve definitions
