@@ -1,175 +1,183 @@
 /**
- * WASM Module for DSP (Digital Signal Processing)
- * Handles noise generation, RMS calculations, and other audio processing tasks.
- * @module wasm
+ * Main Entry Point for GAIN CURVE LAB
+ * Initializes the application and coordinates between modules.
+ * @module main
  */
 
-// WASM module (Base64 encoded)
-const DSP_WASM_B64 = "AGFzbQEAAAABGQVgAXwBfGAAAX1gAX8AYAJ/fwBgAn9/AX0CCwEDZW52A2xvZwAAAwcGAQIDAwMEBQQBAQggBgkBfwFB5dCFKgsHPQYGbWVtb3J5AgAEc2VlZAACCWdlbl93aGl0ZQADCGdlbl9waW5rAAQJZ2VuX2Jyb3duAAUGcm1zX2RiAAYKmQQGOQEBfyMAIQAgACAAQQ10cyEAIAAgAEERdnMhACAAIABBBXRzIQAgACQAIACzQwAAADCUQwAAgD+TCwYAIAAkAAsrAQF/QQAhAgJAA0AgAiABTw0BIAAgAkEEbGoQATgCACACQQFqIQIMAAsLC9IBAgF/CX1BACECAkADQCACIAFPDQEQASEDIARDSrV/P5QgA0O9ZmM9lJIhBCAFQzhKfj+UIANDZcGZPZSSIQUgBkNiEHg/lCADQ2GLHT6UkiEGIAdD8tJdP5QgA0P4954+lJIhByAIQ83MDD+UIANDjm8IP5SSIQhDOPhCvyAJlCADQ61tijyUkyEJIAQgBZIgBpIgB5IgCJIgCZIgCpIgA0NnRAk/lJIhCyADQ5xq7T2UIQogACACQQRsaiALQ65H4T2UOAIAIAJBAWohAgwACwsgAyABuKMhBSAFnyEGIAZE8WjjiLX45D5lBH1DAACgwgVEAAAAAAAANEAgBhAARBZVtbuxawJAo6K2Cws=";
+// Import the UI module
+import { initUI, setStatus, showError } from './ui.js';
+
+// Import the WASM module loader (for window access)
+import { loadDspModule } from './wasm.js';
 
 /**
- * WASM Memory Offsets (bytes)
+ * Application state
  */
-const WASM_CONFIG = {
-  NOISE_OFFSET: 0,
-  NOISE_CAPACITY: 100000,
-  RMS_BEFORE_OFFSET: 400000,
-  RMS_AFTER_OFFSET: 410000,
-  SAMPLE_RATE: 44100,
-  BUFFER_SIZE: 2048
+const appState = {
+  initialized: false,
+  initializationError: null
 };
 
 /**
- * DSP Module Instance
- * @type {Object|null}
+ * Initialize the application
  */
-let dsp = null;
-
-/**
- * Convert Base64 to Uint8Array
- * @param {string} b64 - Base64 encoded string
- * @returns {Uint8Array} - Decoded bytes
- */
-function b64ToBytes(b64) {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) {
-    bytes[i] = bin.charCodeAt(i);
-  }
-  return bytes;
-}
-
-/**
- * Load and instantiate the WASM module
- * @returns {Promise<Object>} - Resolves with the WASM exports and memory
- */
-export async function loadDspModule() {
-  if (dsp) return dsp;
-
+async function initApp() {
+  if (appState.initialized) return;
+  
   try {
-    const bytes = b64ToBytes(DSP_WASM_B64);
-    const { instance } = await WebAssembly.instantiate(bytes, {
-      env: {
-        log: Math.log,
-        // Add other imported functions if needed
-      },
-    });
-    dsp = instance.exports;
-    console.log("WASM module loaded successfully");
-    return dsp;
+    // Set initial status
+    setStatus('initializing...', false);
+    
+    // Make WASM loader available globally for UI module
+    window.loadDspModule = loadDspModule;
+    
+    // Initialize UI (which will load WASM and set up everything)
+    await initUI();
+    
+    appState.initialized = true;
+    appState.initializationError = null;
+    
+    console.log('GAIN CURVE LAB initialized successfully');
   } catch (err) {
-    console.error("Failed to load WASM module:", err);
-    throw new Error("WASM module failed to load. Falling back to JavaScript implementations.");
+    appState.initialized = false;
+    appState.initializationError = err;
+    
+    console.error('Failed to initialize GAIN CURVE LAB:', err);
+    setStatus('initialization failed', false);
+    showError(`Failed to initialize application: ${err.message}`);
+    
+    // Show a user-friendly error message
+    const errorContainer = document.createElement('div');
+    errorContainer.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #ff5c5c;
+      color: white;
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+      z-index: 1000;
+      max-width: 80%;
+    `;
+    errorContainer.innerHTML = `
+      <h2>Initialization Error</h2>
+      <p>${err.message}</p>
+      <p>Please refresh the page to try again.</p>
+      <button onclick="this.parentElement.remove()" style="
+        background: #1a1000;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-top: 10px;
+      ">Dismiss</button>
+    `;
+    document.body.appendChild(errorContainer);
   }
 }
 
 /**
- * Get the WASM module instance
- * @returns {Object|null} - The WASM exports and memory, or null if not loaded
+ * Check if Web Audio API is supported
+ * @returns {boolean} - True if Web Audio API is supported
  */
-export function getDspModule() {
-  return dsp;
-}
-
-/**
- * Generate noise buffer using WASM
- * @param {AudioContext} audioCtx - Web Audio API context
- * @param {string} type - Noise type ('white', 'pink', 'brown')
- * @returns {AudioBuffer|null} - Generated noise buffer or null if WASM not available
- */
-export function createNoiseBuffer(audioCtx, type) {
-  if (!dsp) {
-    console.warn("WASM module not loaded. Cannot generate noise.");
-    return null;
-  }
-
+function checkWebAudioSupport() {
   try {
-    const len = Math.min(audioCtx.sampleRate * 2, WASM_CONFIG.NOISE_CAPACITY);
-    const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    // Reseed for variety
-    dsp.seed((Date.now() ^ (Math.random() * 0xffffffff)) | 0);
-
-    // Generate noise based on type
-    switch (type) {
-      case 'white':
-        dsp.gen_white(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      case 'pink':
-        dsp.gen_pink(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      case 'brown':
-        dsp.gen_brown(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      default:
-        console.warn(`Unknown noise type: ${type}. Defaulting to white noise.`);
-        dsp.gen_white(WASM_CONFIG.NOISE_OFFSET, len);
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) {
+      throw new Error('Web Audio API not supported in this browser');
     }
-
-    // Copy from WASM memory to AudioBuffer
-    const wasmView = new Float32Array(
-      dsp.memory.buffer,
-      WASM_CONFIG.NOISE_OFFSET,
-      len
-    );
-    data.set(wasmView);
-    return buffer;
-  } catch (err) {
-    console.error("Failed to create noise buffer:", err);
-    return null;
+    
+    // Test if we can create a context
+    const testCtx = new AudioContext();
+    testCtx.close();
+    return true;
+  } catch (e) {
+    console.error('Web Audio API check failed:', e);
+    return false;
   }
 }
 
 /**
- * Calculate RMS in dBFS from a Float32Array using WASM
- * @param {Float32Array} floatData - Audio sample data
- * @param {number} wasmOffset - Offset in WASM memory to use for scratch space
- * @returns {number} - RMS level in dBFS
+ * Check if WebAssembly is supported
+ * @returns {boolean} - True if WebAssembly is supported
  */
-export function dbFromBuffer(floatData, wasmOffset) {
-  if (!dsp) {
-    console.warn("WASM module not loaded. Using fallback JS RMS calculation.");
-    return calculateRmsJs(floatData);
-  }
-
+function checkWebAssemblySupport() {
   try {
-    const view = new Float32Array(
-      dsp.memory.buffer,
-      wasmOffset,
-      floatData.length
-    );
-    view.set(floatData);
-    return dsp.rms_db(wasmOffset, floatData.length);
-  } catch (err) {
-    console.error("WASM RMS calculation failed:", err);
-    return calculateRmsJs(floatData);
+    if (typeof WebAssembly === 'object' && 
+        typeof WebAssembly.instantiate === 'function') {
+      return true;
+    }
+    throw new Error('WebAssembly not supported');
+  } catch (e) {
+    console.error('WebAssembly check failed:', e);
+    return false;
   }
 }
 
 /**
- * Fallback JavaScript RMS to dBFS calculation
- * @param {Float32Array} floatData - Audio sample data
- * @returns {number} - RMS level in dBFS
+ * Show compatibility warning if required APIs are not supported
  */
-function calculateRmsJs(floatData) {
-  let sum = 0;
-  for (let i = 0; i < floatData.length; i++) {
-    sum += floatData[i] * floatData[i];
+function showCompatibilityWarning() {
+  const unsupported = [];
+  
+  if (!checkWebAudioSupport()) {
+    unsupported.push('Web Audio API');
   }
-  const rms = Math.sqrt(sum / floatData.length);
-  // Convert to dBFS (assuming max value is 1.0)
-  return rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+  
+  if (!checkWebAssemblySupport()) {
+    unsupported.push('WebAssembly');
+  }
+  
+  if (unsupported.length > 0) {
+    const warningContainer = document.createElement('div');
+    warningContainer.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #ff8a3d;
+      color: #1a1000;
+      padding: 15px;
+      border-radius: 8px;
+      max-width: 300px;
+      z-index: 1000;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    `;
+    warningContainer.innerHTML = `
+      <h3 style="margin: 0 0 10px 0;">⚠️ Compatibility Warning</h3>
+      <p style="margin: 0;">The following features are not supported in your browser:</p>
+      <ul style="margin: 10px 0; padding-left: 20px;">
+        ${unsupported.map(feature => `<li>${feature}</li>`).join('')}
+      </ul>
+      <p style="margin: 0; font-size: 11px;">Some functionality may be limited.</p>
+      <button onclick="this.parentElement.remove()" style="
+        background: #1a1000;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-top: 10px;
+        font-family: inherit;
+      ">Dismiss</button>
+    `;
+    document.body.appendChild(warningContainer);
+  }
 }
 
-/**
- * Convert dB to percentage for UI display
- * @param {number} db - Decibel value
- * @returns {number} - Percentage (0-100)
- */
-export function dbToPct(db) {
-  const clamped = Math.max(-60, Math.min(0, db));
-  return ((clamped + 60) / 60) * 100;
-}
+// Initialize the application when the DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  showCompatibilityWarning();
+  initApp();
+});
 
-export { WASM_CONFIG };
+// Export for debugging
+window.GAIN_CURVE_LAB = {
+  appState,
+  initApp,
+  checkWebAudioSupport,
+  checkWebAssemblySupport
+};
