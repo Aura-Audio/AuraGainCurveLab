@@ -1,95 +1,69 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AuraGainCurveLab — 50-Engine Rack</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <div class="wrap">
-    <header>
-      <div class="eyebrow">Multi-Track Gain Curve Laboratory</div>
-      <h1>AuraGainCurveLab <span>50-Engine Rack</span></h1>
-      <p>
-        Fifty independent gain-scaling engines, each with a unique curve algorithm.
-        Select a source, set duration, and start any engine to hear and visualize the effect.
-        <b>All processing is local — no audio leaves your browser.</b>
-      </p>
-    </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Water Bubble Sound Generator</title>
+    <meta
+      name="description"
+      content="A procedural water-bubble sound generator built with the Web Audio API."
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self';"
+    />
+    <link rel="stylesheet" href="./css/styles.css" />
+    <script type="module" src="./js/main.js"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>Water Bubble Sound Generator</h1>
+        <p>
+          Procedural water-bubble synthesis using the Web Audio API. Choose a preset, adjust
+          parameters in real time, or generate a random variation. Audio starts only after explicit
+          user interaction.
+        </p>
+      </header>
 
-    <!-- Master Controls -->
-    <div class="panel master-panel">
-      <div class="master-header">
-        <h2>Master Controls</h2>
-        <span class="status" id="globalStatus">Idle · 50 engines ready</span>
-      </div>
+      <section class="transport" aria-label="Transport controls">
+        <button id="start-stop" type="button" aria-pressed="false">Start</button>
+        <button id="randomize" type="button">Random Variation</button>
+        <button id="mute" type="button" aria-pressed="false">Mute</button>
+        <button id="reset" type="button">Reset</button>
 
-      <div class="master-row">
-        <div class="master-group">
-          <label class="grouplabel">Global Transport</label>
-          <div class="btnset">
-            <button id="startAllBtn" class="btn success">▶ START ALL ENGINES</button>
-            <button id="stopAllBtn" class="btn danger">■ STOP ALL ENGINES</button>
-          </div>
+        <label class="toggle" for="animation-toggle">
+          <input id="animation-toggle" type="checkbox" checked />
+          Animation
+        </label>
+
+        <div class="status-group">
+          <div id="preset-name" class="preset-name">Preset: Gentle Brook</div>
+          <div id="status" class="status" role="status" aria-live="polite">Stopped</div>
         </div>
+      </section>
 
-        <div class="master-group">
-          <label class="grouplabel">Master Source (all engines)</label>
-          <select id="masterSource">
-            <option value="tone" selected>Tone</option>
-            <option value="mic">Live Mic</option>
-            <option value="white">White Noise</option>
-            <option value="pink">Pink Noise</option>
-            <option value="brown">Brown Noise</option>
-          </select>
-        </div>
+      <section id="presets" class="presets" aria-label="Presets"></section>
 
-        <div class="master-group">
-          <label class="grouplabel">Master Duration (all engines)</label>
-          <select id="masterDuration">
-            <option value="2">2 s</option>
-            <option value="1">1 s</option>
-            <option value="0.5" selected>0.5 s</option>
-            <option value="0.1">0.1 s</option>
-            <option value="0.05">0.05 s</option>
-            <option value="0.01">0.01 s</option>
-            <option value="0.005">0.005 s</option>
-            <option value="0.001">0.001 s</option>
-          </select>
-        </div>
-      </div>
+      <canvas
+        id="scene"
+        role="img"
+        aria-label="Animated visualization of rising bubbles reflecting the current bubble rate and size."
+      ></canvas>
 
-      <div class="master-row">
-        <div class="master-group">
-          <label class="grouplabel">Master Monitor Volume (per-engine)</label>
-          <div class="slider-field">
-            <input type="range" id="masterMonitorVol" min="0" max="100" value="20" step="1">
-            <span class="val" id="masterMonitorVal">20%</span>
-          </div>
-        </div>
+      <section id="controls" class="controls" aria-label="Sound parameters"></section>
 
-        <div class="master-group">
-          <label class="grouplabel">Master App Volume (overall mix)</label>
-          <div class="slider-field">
-            <input type="range" id="masterAppVol" min="0" max="100" value="80" step="1">
-            <span class="val" id="masterAppVal">80%</span>
-          </div>
-        </div>
-      </div>
-    </div>
+      <footer>
+        <p>Keyboard shortcuts: Space = start or stop, R = randomize, M = mute.</p>
+        <p>
+          All audio is generated locally in your browser. This app does not send data anywhere.
+        </p>
+      </footer>
 
-    <div class="engine-grid" id="engineGrid"></div>
-
-    <footer>
-      <b>Safety:</b> Each engine has its own monitor volume. Use headphones when using microphone sources to avoid feedback.
-      <b>WASM:</b> DSP acceleration loads automatically if supported; otherwise a pure-JS fallback ensures full functionality.
-    </footer>
-  </div>
-
-  <script type="module" src="main.js"></script>
-</body>
+      <noscript>
+        <div class="noscript">This application requires JavaScript to run.</div>
+      </noscript>
+    </main>
+  </body>
 </html>
