@@ -43,13 +43,13 @@ export function initVisualizer(elements) {
   dbAfterEl = elements.dbAfter;
   deltaDbEl = elements.deltaDb;
   gainPctEl = elements.gainPct;
-  
+
   // Fit canvases to their containers
   fitAllCanvases();
-  
+
   // Draw initial ramp
   drawRamp();
-  
+
   // Start animation loop
   animate();
 }
@@ -60,7 +60,7 @@ export function initVisualizer(elements) {
  */
 function fitCanvas(canvas) {
   if (!canvas) return;
-  
+
   const ratio = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, rect.width * ratio);
@@ -82,15 +82,15 @@ export function fitAllCanvases() {
  */
 function drawScope(canvas, byteData, color) {
   if (!canvas || !byteData) return;
-  
+
   const ctx = canvas.getContext('2d');
   const w = canvas.width;
   const h = canvas.height;
   const ratio = window.devicePixelRatio || 1;
-  
+
   // Clear canvas
   ctx.clearRect(0, 0, w, h);
-  
+
   // Draw center line
   ctx.strokeStyle = '#232830';
   ctx.lineWidth = 1 * ratio;
@@ -98,12 +98,12 @@ function drawScope(canvas, byteData, color) {
   ctx.moveTo(0, h / 2);
   ctx.lineTo(w, h / 2);
   ctx.stroke();
-  
+
   // Draw waveform
   ctx.strokeStyle = color;
   ctx.lineWidth = 2 * ratio;
   ctx.beginPath();
-  
+
   const slice = w / byteData.length;
   for (let i = 0; i < byteData.length; i++) {
     const v = byteData[i] / 128.0 - 1.0;
@@ -123,20 +123,20 @@ function drawScope(canvas, byteData, color) {
  */
 export function drawRamp() {
   if (!rampCanvas) return;
-  
+
   const ctx = rampCanvas.getContext('2d');
   const w = rampCanvas.width;
   const h = rampCanvas.height;
   const ratio = window.devicePixelRatio || 1;
-  
+
   // Clear canvas
   ctx.clearRect(0, 0, w, h);
-  
+
   // Draw grid lines
   ctx.strokeStyle = '#3a4250';
   ctx.lineWidth = 1 * ratio;
   ctx.globalAlpha = 0.5;
-  
+
   for (let gy = 0; gy <= 4; gy++) {
     const y = (h - 16 * ratio) - (gy / 4) * (h - 32 * ratio) + 8 * ratio;
     ctx.beginPath();
@@ -144,9 +144,9 @@ export function drawRamp() {
     ctx.lineTo(w, y);
     ctx.stroke();
   }
-  
+
   ctx.globalAlpha = 1;
-  
+
   // Draw ramp line (100% to 1%)
   ctx.strokeStyle = '#ff8a3d';
   ctx.lineWidth = 2.5 * ratio;
@@ -156,7 +156,7 @@ export function drawRamp() {
   ctx.moveTo(0, top);
   ctx.lineTo(w, bottom);
   ctx.stroke();
-  
+
   // Draw snap-back line
   ctx.setLineDash([4 * ratio, 4 * ratio]);
   ctx.strokeStyle = '#585f6b';
@@ -165,16 +165,16 @@ export function drawRamp() {
   ctx.lineTo(w, top);
   ctx.stroke();
   ctx.setLineDash([]);
-  
+
   // Draw playhead
   let phase = 0;
   if (isRunning()) {
     phase = getCurrentPhase();
   }
-  
+
   const px = phase * w;
   const py = top + phase * (bottom - top);
-  
+
   // Vertical line
   ctx.strokeStyle = '#dbe2e8';
   ctx.lineWidth = 1 * ratio;
@@ -182,13 +182,13 @@ export function drawRamp() {
   ctx.moveTo(px, 0);
   ctx.lineTo(px, h);
   ctx.stroke();
-  
+
   // Circle marker
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
   ctx.arc(px, py, 4 * ratio, 0, Math.PI * 2);
   ctx.fill();
-  
+
   // Labels
   ctx.fillStyle = '#6d7683';
   ctx.font = `${11 * ratio}px JetBrains Mono, monospace`;
@@ -201,21 +201,21 @@ export function drawRamp() {
  */
 function updateMeters() {
   if (!barBeforeEl || !barAfterEl || !dbBeforeEl || !dbAfterEl || !deltaDbEl || !gainPctEl) return;
-  
+
   const { dbBefore, dbAfter } = getDbValues();
-  
+
   // Update bars
   barBeforeEl.style.width = `${dbToPct(dbBefore)}%`;
   barAfterEl.style.width = `${dbToPct(dbAfter)}%`;
-  
+
   // Update readouts
   dbBeforeEl.textContent = dbBefore <= -79 ? '−∞' : dbBefore.toFixed(1);
   dbAfterEl.textContent = dbAfter <= -79 ? '−∞' : dbAfter.toFixed(1);
-  
+
   // Update delta
   const delta = (dbBefore <= -79 || dbAfter <= -79) ? 0 : (dbBefore - dbAfter);
   deltaDbEl.textContent = `${delta.toFixed(1)} dB`;
-  
+
   // Update gain percentage
   gainPctEl.textContent = `${getCurrentGainPct()}%`;
 }
@@ -226,16 +226,16 @@ function updateMeters() {
 function animate() {
   // Update meters and scopes
   updateMeters();
-  
+
   const { byteBefore, byteAfter } = getAnalyserData();
-  
+
   // Draw scopes
   drawScope(scopeBeforeCanvas, byteBefore, '#4fd3c4');
   drawScope(scopeAfterCanvas, byteAfter, '#ff8a3d');
-  
+
   // Draw ramp
   drawRamp();
-  
+
   // Continue animation loop
   animHandle = requestAnimationFrame(animate);
 }
@@ -264,7 +264,7 @@ export function resumeAnimation() {
  */
 export function cleanup() {
   pauseAnimation();
-  
+
   scopeBeforeCanvas = null;
   scopeAfterCanvas = null;
   rampCanvas = null;
