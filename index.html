@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>GAIN CURVE LAB — Scale Demonstrator</title>
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">Signal Scaling Demonstrator</div>
+      <h1>GAIN CURVE <span>LAB</span></h1>
+      <p>
+        Every cycle, the output gain is ramped linearly from <b>100%</b> down to <b>1%</b> and snapped back — on repeat.
+        The <b style="color:var(--before)">before</b> trace is the untouched source; the <b style="color:var(--after)">after</b> trace is what
+        actually reaches the speakers. Amplitude is linear, hearing is logarithmic: a 1% scale is roughly a <b>−40 dB</b> drop in level, not a change in tone.
+      </p>
+    </header>
+
+    <div class="panel controls">
+      <div class="control-group">
+        <label class="grouplabel">Source</label>
+        <div class="btnset" id="sourceButtons">
+          <button class="btn src" data-source="mic" title="Use live microphone input">Live Mic</button>
+          <button class="btn src active" data-source="tone" title="Generate a tone waveform">Tone</button>
+          <button class="btn src" data-source="white" title="Generate white noise">White Noise</button>
+          <button class="btn src" data-source="pink" title="Generate pink noise">Pink Noise</button>
+          <button class="btn src" data-source="brown" title="Generate brown noise">Brown Noise</button>
+        </div>
+        <div class="tone-controls hidden" id="toneControls">
+          <div class="slider-field">
+            <span>Wave</span>
+            <select id="waveformSelect" title="Select waveform type">
+              <option value="sine">Sine</option>
+              <option value="square">Square</option>
+              <option value="sawtooth">Sawtooth</option>
+              <option value="triangle">Triangle</option>
+            </select>
+          </div>
+          <div class="slider-field">
+            <span>Freq</span>
+            <input type="range" id="freqSlider" min="55" max="2000" value="440" step="1" title="Adjust frequency">
+            <span class="val" id="freqVal">440 Hz</span>
+          </div>
+        </div>
+        <div class="error-message" id="errorMessage"></div>
+      </div>
+
+      <div class="control-group">
+        <label class="grouplabel">Scale cycle duration (100% → 1%, looped)</label>
+        <div class="btnset" id="durationButtons">
+          <button class="btn" data-dur="1" title="1 second cycle">1 s</button>
+          <button class="btn active" data-dur="0.5" title="0.5 second cycle">0.5 s</button>
+          <button class="btn" data-dur="0.1" title="0.1 second cycle">0.1 s</button>
+          <button class="btn" data-dur="0.05" title="0.05 second cycle">0.05 s</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label class="grouplabel">Monitor volume (safety — only affects what you hear)</label>
+        <div class="slider-field">
+          <input type="range" id="monitorSlider" min="0" max="100" value="35" step="1" title="Adjust monitor volume">
+          <span class="val" id="monitorVal">35%</span>
+        </div>
+      </div>
+
+      <div class="transport">
+        <button class="playbtn" id="playBtn" title="Start or stop the audio engine">▶ START ENGINE</button>
+        <span class="status" id="statusText"><span class="dot"></span>idle</span>
+      </div>
+    </div>
+
+    <div class="meters">
+      <div class="panel meter-panel before">
+        <h3>Before</h3>
+        <div class="tag">Unscaled source · reference</div>
+        <canvas class="scope" id="scopeBefore"></canvas>
+        <div class="db-row">
+          <div class="db-bar-track"><div class="db-bar-fill" id="barBefore"></div></div>
+          <div class="db-readout">RMS <b id="dbBefore">−∞</b> dB</div>
+        </div>
+        <div class="scale-readout"><span>Gain applied</span><span class="pct" style="color:var(--before)">100%</span></div>
+      </div>
+
+      <div class="panel meter-panel after">
+        <h3>After</h3>
+        <div class="tag">Scaled output · what you hear</div>
+        <canvas class="scope" id="scopeAfter"></canvas>
+        <div class="db-row">
+          <div class="db-bar-track"><div class="db-bar-fill" id="barAfter"></div></div>
+          <div class="db-readout">RMS <b id="dbAfter">−∞</b> dB</div>
+        </div>
+        <div class="scale-readout"><span>Gain applied</span><span class="pct" id="gainPct">100%</span></div>
+      </div>
+    </div>
+
+    <div class="panel delta-strip">
+      <div>
+        <div class="label">Level reduction (before − after)</div>
+        <div class="sub">Updates live as the ramp runs its cycle</div>
+      </div>
+      <div class="value" id="deltaDb">0.0 dB</div>
+    </div>
+
+    <div class="ramp-section">
+      <h3>Gain ramp — one full cycle</h3>
+      <canvas class="ramp" id="rampCanvas"></canvas>
+    </div>
+
+    <footer>
+      <b>Notes:</b> the "before" signal is analysed only, never sent to your speakers — you always hear the scaled "after" path.
+      Use headphones when using Live Mic to avoid feedback. Microphone audio stays in your browser; nothing is recorded or uploaded.
+    </footer>
+  </div>
+
+  <!-- Load WASM module -->
+  <script type="module">
+    import { loadDspModule } from './wasm.js';
+    window.loadDspModule = loadDspModule;
+  </script>
+  
+  <!-- Main application -->
+  <script type="module" src="main.js"></script>
+</body>
+</html>
