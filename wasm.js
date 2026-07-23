@@ -1,175 +1,435 @@
 /**
- * WASM Module for DSP (Digital Signal Processing)
- * Handles noise generation, RMS calculations, and other audio processing tasks.
- * @module wasm
+ * Audio Module for GAIN CURVE LAB
+ * Handles Web Audio API setup, source management, and gain automation.
+ * @module audio
  */
 
-// WASM module (Base64 encoded)
-const DSP_WASM_B64 = "AGFzbQEAAAABGQVgAXwBfGAAAX1gAX8AYAJ/fwBgAn9/AX0CCwEDZW52A2xvZwAAAwcGAQIDAwMEBQQBAQggBgkBfwFB5dCFKgsHPQYGbWVtb3J5AgAEc2VlZAACCWdlbl93aGl0ZQADCGdlbl9waW5rAAQJZ2VuX2Jyb3duAAUGcm1zX2RiAAYKmQQGOQEBfyMAIQAgACAAQQ10cyEAIAAgAEERdnMhACAAIABBBXRzIQAgACQAIACzQwAAADCUQwAAgD+TCwYAIAAkAAsrAQF/QQAhAgJAA0AgAiABTw0BIAAgAkEEbGoQATgCACACQQFqIQIMAAsLC9IBAgF/CX1BACECAkADQCACIAFPDQEQASEDIARDSrV/P5QgA0O9ZmM9lJIhBCAFQzhKfj+UIANDZcGZPZSSIQUgBkNiEHg/lCADQ2GLHT6UkiEGIAdD8tJdP5QgA0P4954+lJIhByAIQ83MDD+UIANDjm8IP5SSIQhDOPhCvyAJlCADQ61tijyUkyEJIAQgBZIgBpIgB5IgCJIgCZIgCpIgA0NnRAk/lJIhCyADQ5xq7T2UIQogACACQQRsaiALQ65H4T2UOAIAIAJBAWohAgwACwsgAyABuKMhBSAFnyEGIAZE8WjjiLX45D5lBH1DAACgwgVEAAAAAAAANEAgBhAARBZVtbuxawJAo6K2Cws=";
-
-/**
- * WASM Memory Offsets (bytes)
- */
-const WASM_CONFIG = {
-  NOISE_OFFSET: 0,
-  NOISE_CAPACITY: 100000,
-  RMS_BEFORE_OFFSET: 400000,
-  RMS_AFTER_OFFSET: 410000,
-  SAMPLE_RATE: 44100,
-  BUFFER_SIZE: 2048
-};
+import { createNoiseBuffer, dbFromBuffer, WASM_CONFIG } from './wasm.js';
 
 /**
- * DSP Module Instance
- * @type {Object|null}
+ * Audio Context and Nodes
  */
-let dsp = null;
+let audioCtx = null;
+let gainBeforeNode = null;
+let analyserBefore = null;
+let gainAfterNode = null;
+let analyserAfter = null;
+let monitorGainNode = null;
+let sourceNode = null;
+let micStream = null;
 
 /**
- * Convert Base64 to Uint8Array
- * @param {string} b64 - Base64 encoded string
- * @returns {Uint8Array} - Decoded bytes
+ * Audio State
  */
-function b64ToBytes(b64) {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) {
-    bytes[i] = bin.charCodeAt(i);
-  }
-  return bytes;
+let currentSourceType = 'tone';
+let cycleDuration = 0.5;
+let segmentT0 = 0;
+let schedulerHandle = null;
+let running = false;
+
+/**
+ * Buffer for analyser data
+ */
+const bufBefore = new Float32Array(WASM_CONFIG.BUFFER_SIZE);
+const bufAfter = new Float32Array(WASM_CONFIG.BUFFER_SIZE);
+const byteBefore = new Uint8Array(WASM_CONFIG.BUFFER_SIZE);
+const byteAfter = new Uint8Array(WASM_CONFIG.BUFFER_SIZE);
+
+/**
+ * Minimum cycle duration to prevent audio thread overload
+ */
+const MIN_CYCLE_DURATION = 0.05;
+
+/**
+ * Ensure AudioContext is created
+ * @returns {AudioContext} - The audio context
+ */
+export function ensureContext() {
+  if (audioCtx) return audioCtx;
+  
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  
+  // Setup audio nodes
+  gainBeforeNode = audioCtx.createGain();
+  gainBeforeNode.gain.value = 1.0;
+  
+  analyserBefore = audioCtx.createAnalyser();
+  analyserBefore.fftSize = WASM_CONFIG.BUFFER_SIZE;
+  gainBeforeNode.connect(analyserBefore); // Metering only
+  
+  gainAfterNode = audioCtx.createGain();
+  gainAfterNode.gain.value = 1.0;
+  
+  analyserAfter = audioCtx.createAnalyser();
+  analyserAfter.fftSize = WASM_CONFIG.BUFFER_SIZE;
+  
+  monitorGainNode = audioCtx.createGain();
+  monitorGainNode.gain.value = 0.35; // Default monitor volume
+  
+  gainAfterNode.connect(analyserAfter);
+  analyserAfter.connect(monitorGainNode);
+  monitorGainNode.connect(audioCtx.destination);
+  
+  return audioCtx;
 }
 
 /**
- * Load and instantiate the WASM module
- * @returns {Promise<Object>} - Resolves with the WASM exports and memory
+ * Connect an audio source
+ * @param {string} type - Source type ('mic', 'tone', 'white', 'pink', 'brown')
+ * @returns {Promise<boolean>} - Resolves with success status
  */
-export async function loadDspModule() {
-  if (dsp) return dsp;
-
+export async function connectSource(type) {
+  // Validate source type
+  const validSources = ['mic', 'tone', 'white', 'pink', 'brown'];
+  if (!validSources.includes(type)) {
+    console.error(`Invalid source type: ${type}`);
+    return false;
+  }
+  
+  disconnectSource();
+  currentSourceType = type;
+  
   try {
-    const bytes = b64ToBytes(DSP_WASM_B64);
-    const { instance } = await WebAssembly.instantiate(bytes, {
-      env: {
-        log: Math.log,
-        // Add other imported functions if needed
-      },
-    });
-    dsp = instance.exports;
-    console.log("WASM module loaded successfully");
-    return dsp;
-  } catch (err) {
-    console.error("Failed to load WASM module:", err);
-    throw new Error("WASM module failed to load. Falling back to JavaScript implementations.");
-  }
-}
-
-/**
- * Get the WASM module instance
- * @returns {Object|null} - The WASM exports and memory, or null if not loaded
- */
-export function getDspModule() {
-  return dsp;
-}
-
-/**
- * Generate noise buffer using WASM
- * @param {AudioContext} audioCtx - Web Audio API context
- * @param {string} type - Noise type ('white', 'pink', 'brown')
- * @returns {AudioBuffer|null} - Generated noise buffer or null if WASM not available
- */
-export function createNoiseBuffer(audioCtx, type) {
-  if (!dsp) {
-    console.warn("WASM module not loaded. Cannot generate noise.");
-    return null;
-  }
-
-  try {
-    const len = Math.min(audioCtx.sampleRate * 2, WASM_CONFIG.NOISE_CAPACITY);
-    const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    // Reseed for variety
-    dsp.seed((Date.now() ^ (Math.random() * 0xffffffff)) | 0);
-
-    // Generate noise based on type
-    switch (type) {
-      case 'white':
-        dsp.gen_white(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      case 'pink':
-        dsp.gen_pink(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      case 'brown':
-        dsp.gen_brown(WASM_CONFIG.NOISE_OFFSET, len);
-        break;
-      default:
-        console.warn(`Unknown noise type: ${type}. Defaulting to white noise.`);
-        dsp.gen_white(WASM_CONFIG.NOISE_OFFSET, len);
+    ensureContext();
+    
+    if (type === 'mic') {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
+        sourceNode = audioCtx.createMediaStreamSource(micStream);
+      } catch (e) {
+        console.error('Microphone access error:', e);
+        throw new Error(`Microphone access was denied or is unavailable: ${e.message}`);
+      }
+    } else if (type === 'tone') {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine'; // Default waveform
+      osc.frequency.value = 440; // Default frequency
+      osc.start();
+      sourceNode = osc;
+    } else {
+      // Noise types
+      const buf = createNoiseBuffer(audioCtx, type);
+      if (!buf) {
+        throw new Error(`Failed to create ${type} noise buffer`);
+      }
+      const node = audioCtx.createBufferSource();
+      node.buffer = buf;
+      node.loop = true;
+      node.start();
+      sourceNode = node;
     }
-
-    // Copy from WASM memory to AudioBuffer
-    const wasmView = new Float32Array(
-      dsp.memory.buffer,
-      WASM_CONFIG.NOISE_OFFSET,
-      len
-    );
-    data.set(wasmView);
-    return buffer;
+    
+    // Connect source to both paths
+    sourceNode.connect(gainBeforeNode);
+    sourceNode.connect(gainAfterNode);
+    
+    return true;
   } catch (err) {
-    console.error("Failed to create noise buffer:", err);
-    return null;
+    console.error('Failed to connect source:', err);
+    disconnectSource();
+    throw err;
   }
 }
 
 /**
- * Calculate RMS in dBFS from a Float32Array using WASM
- * @param {Float32Array} floatData - Audio sample data
- * @param {number} wasmOffset - Offset in WASM memory to use for scratch space
- * @returns {number} - RMS level in dBFS
+ * Disconnect current audio source
  */
-export function dbFromBuffer(floatData, wasmOffset) {
-  if (!dsp) {
-    console.warn("WASM module not loaded. Using fallback JS RMS calculation.");
-    return calculateRmsJs(floatData);
+export function disconnectSource() {
+  if (sourceNode) {
+    try {
+      sourceNode.disconnect();
+    } catch (e) {
+      console.warn('Error disconnecting source node:', e);
+    }
+    if (sourceNode.stop) {
+      try {
+        sourceNode.stop();
+      } catch (e) {
+        console.warn('Error stopping source node:', e);
+      }
+    }
+    sourceNode = null;
   }
+  
+  if (micStream) {
+    try {
+      micStream.getTracks().forEach(track => track.stop());
+    } catch (e) {
+      console.warn('Error stopping microphone tracks:', e);
+    }
+    micStream = null;
+  }
+}
 
+/**
+ * Reset the gain ramp baseline
+ */
+export function resetRampBaseline() {
+  if (!audioCtx) return;
+  
+  const now = audioCtx.currentTime;
+  if (gainAfterNode) {
+    gainAfterNode.gain.cancelScheduledValues(now);
+    gainAfterNode.gain.setValueAtTime(1.0, now);
+  }
+  segmentT0 = now;
+}
+
+/**
+ * Set the cycle duration for gain ramp
+ * @param {number} duration - Cycle duration in seconds
+ */
+export function setCycleDuration(duration) {
+  // Enforce minimum duration
+  cycleDuration = Math.max(MIN_CYCLE_DURATION, parseFloat(duration));
+  if (audioCtx) {
+    resetRampBaseline();
+  }
+}
+
+/**
+ * Get current cycle duration
+ * @returns {number} - Current cycle duration
+ */
+export function getCycleDuration() {
+  return cycleDuration;
+}
+
+/**
+ * Get current source type
+ * @returns {string} - Current source type
+ */
+export function getCurrentSourceType() {
+  return currentSourceType;
+}
+
+/**
+ * Start the audio engine
+ * @returns {Promise<boolean>} - Resolves with success status
+ */
+export async function startEngine() {
+  if (running) return true;
+  
   try {
-    const view = new Float32Array(
-      dsp.memory.buffer,
-      wasmOffset,
-      floatData.length
-    );
-    view.set(floatData);
-    return dsp.rms_db(wasmOffset, floatData.length);
+    ensureContext();
+    
+    // Handle suspended context (common on mobile)
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+    
+    const success = await connectSource(currentSourceType);
+    if (!success) return false;
+    
+    resetRampBaseline();
+    running = true;
+    
+    // Start the scheduler
+    schedulerTick();
+    schedulerHandle = setInterval(schedulerTick, 25);
+    
+    return true;
   } catch (err) {
-    console.error("WASM RMS calculation failed:", err);
-    return calculateRmsJs(floatData);
+    console.error('Failed to start engine:', err);
+    stopEngine();
+    throw err;
   }
 }
 
 /**
- * Fallback JavaScript RMS to dBFS calculation
- * @param {Float32Array} floatData - Audio sample data
- * @returns {number} - RMS level in dBFS
+ * Stop the audio engine
  */
-function calculateRmsJs(floatData) {
-  let sum = 0;
-  for (let i = 0; i < floatData.length; i++) {
-    sum += floatData[i] * floatData[i];
+export function stopEngine() {
+  running = false;
+  
+  if (schedulerHandle) {
+    clearInterval(schedulerHandle);
+    schedulerHandle = null;
   }
-  const rms = Math.sqrt(sum / floatData.length);
-  // Convert to dBFS (assuming max value is 1.0)
-  return rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+  
+  disconnectSource();
 }
 
 /**
- * Convert dB to percentage for UI display
- * @param {number} db - Decibel value
- * @returns {number} - Percentage (0-100)
+ * Toggle engine state
+ * @returns {Promise<boolean>} - Resolves with new running state
  */
-export function dbToPct(db) {
-  const clamped = Math.max(-60, Math.min(0, db));
-  return ((clamped + 60) / 60) * 100;
+export async function toggleEngine() {
+  if (running) {
+    stopEngine();
+    return false;
+  } else {
+    const success = await startEngine();
+    return success;
+  }
 }
 
-export { WASM_CONFIG };
+/**
+ * Is the engine running?
+ * @returns {boolean} - Current running state
+ */
+export function isRunning() {
+  return running;
+}
+
+/**
+ * Get audio analyser data
+ * @returns {Object} - Object containing analyser data
+ */
+export function getAnalyserData() {
+  if (!audioCtx || !analyserBefore || !analyserAfter) {
+    return {
+      bufBefore: new Float32Array(0),
+      bufAfter: new Float32Array(0),
+      byteBefore: new Uint8Array(0),
+      byteAfter: new Uint8Array(0)
+    };
+  }
+  
+  analyserBefore.getFloatTimeDomainData(bufBefore);
+  analyserAfter.getFloatTimeDomainData(bufAfter);
+  analyserBefore.getByteTimeDomainData(byteBefore);
+  analyserAfter.getByteTimeDomainData(byteAfter);
+  
+  return {
+    bufBefore,
+    bufAfter,
+    byteBefore,
+    byteAfter
+  };
+}
+
+/**
+ * Calculate dB values from analyser data
+ * @returns {Object} - Object containing dB values
+ */
+export function getDbValues() {
+  const { bufBefore, bufAfter } = getAnalyserData();
+  
+  const dbB = dbFromBuffer(bufBefore, WASM_CONFIG.RMS_BEFORE_OFFSET);
+  const dbA = dbFromBuffer(bufAfter, WASM_CONFIG.RMS_AFTER_OFFSET);
+  
+  return {
+    dbBefore: dbB <= -79 ? -Infinity : dbB,
+    dbAfter: dbA <= -79 ? -Infinity : dbA
+  };
+}
+
+/**
+ * Get current gain percentage based on cycle phase
+ * @returns {number} - Current gain percentage (0-100)
+ */
+export function getCurrentGainPct() {
+  if (!audioCtx || !running) return 100;
+  
+  const now = audioCtx.currentTime;
+  const elapsed = (now - segmentT0) % cycleDuration;
+  const phase = elapsed / cycleDuration;
+  const gain = 1.0 + (0.01 - 1.0) * phase;
+  
+  return Math.round(gain * 100);
+}
+
+/**
+ * Get the current phase of the gain cycle
+ * @returns {number} - Phase (0-1)
+ */
+export function getCurrentPhase() {
+  if (!audioCtx || !running) return 0;
+  
+  const now = audioCtx.currentTime;
+  return ((now - segmentT0) % cycleDuration) / cycleDuration;
+}
+
+/**
+ * Update oscillator properties (for tone source)
+ * @param {string} waveform - Waveform type
+ * @param {number} frequency - Frequency in Hz
+ */
+export function updateOscillator(waveform, frequency) {
+  if (sourceNode && currentSourceType === 'tone' && sourceNode.type) {
+    sourceNode.type = waveform;
+    sourceNode.frequency.value = frequency;
+  }
+}
+
+/**
+ * Set monitor volume
+ * @param {number} volume - Volume percentage (0-100)
+ */
+export function setMonitorVolume(volume) {
+  const clampedVolume = Math.max(0, Math.min(100, volume));
+  if (monitorGainNode) {
+    monitorGainNode.gain.value = clampedVolume / 100;
+  }
+}
+
+/**
+ * Scheduler tick for gain automation
+ */
+function schedulerTick() {
+  if (!audioCtx || !running) return;
+  
+  const lookahead = 0.25;
+  const now = audioCtx.currentTime;
+  
+  // Calculate how many cycles have passed since segmentT0
+  let n = Math.floor((now - segmentT0) / cycleDuration);
+  let nextStart = segmentT0 + n * cycleDuration;
+  
+  // Schedule gain changes for upcoming cycles
+  while (nextStart < now + lookahead) {
+    if (nextStart >= now - 0.001) {
+      if (gainAfterNode) {
+        gainAfterNode.gain.setValueAtTime(1.0, nextStart);
+        gainAfterNode.gain.linearRampToValueAtTime(0.01, nextStart + cycleDuration);
+      }
+    }
+    nextStart += cycleDuration;
+  }
+}
+
+/**
+ * Clean up audio resources
+ */
+export function cleanup() {
+  stopEngine();
+  
+  if (audioCtx) {
+    try {
+      audioCtx.close();
+    } catch (e) {
+      console.warn('Error closing audio context:', e);
+    }
+    audioCtx = null;
+  }
+  
+  // Reset all nodes
+  gainBeforeNode = null;
+  analyserBefore = null;
+  gainAfterNode = null;
+  analyserAfter = null;
+  monitorGainNode = null;
+  sourceNode = null;
+  micStream = null;
+}
+
+// Clean up on page unload
+window.addEventListener('beforeunload', cleanup);
+
+export {
+  audioCtx,
+  gainBeforeNode,
+  analyserBefore,
+  gainAfterNode,
+  analyserAfter,
+  monitorGainNode,
+  sourceNode,
+  micStream
+};
