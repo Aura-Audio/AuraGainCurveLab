@@ -21,9 +21,62 @@
       </p>
     </header>
 
-    <div class="global-controls">
-      <button id="stopAllBtn" class="btn danger">■ STOP ALL ENGINES</button>
-      <span class="status" id="globalStatus">Idle · 20 engines ready</span>
+    <!-- Master Controls -->
+    <div class="panel master-panel">
+      <div class="master-header">
+        <h2>Master Controls</h2>
+        <span class="status" id="globalStatus">Idle · 20 engines ready</span>
+      </div>
+
+      <div class="master-row">
+        <div class="master-group">
+          <label class="grouplabel">Global Transport</label>
+          <div class="btnset">
+            <button id="startAllBtn" class="btn success">▶ START ALL ENGINES</button>
+            <button id="stopAllBtn" class="btn danger">■ STOP ALL ENGINES</button>
+          </div>
+        </div>
+
+        <div class="master-group">
+          <label class="grouplabel">Master Source (all engines)</label>
+          <select id="masterSource">
+            <option value="tone" selected>Tone</option>
+            <option value="mic">Live Mic</option>
+            <option value="white">White Noise</option>
+            <option value="pink">Pink Noise</option>
+            <option value="brown">Brown Noise</option>
+          </select>
+        </div>
+
+        <div class="master-group">
+          <label class="grouplabel">Master Duration (all engines)</label>
+          <select id="masterDuration">
+            <option value="2">2 s</option>
+            <option value="1">1 s</option>
+            <option value="0.5" selected>0.5 s</option>
+            <option value="0.1">0.1 s</option>
+            <option value="0.05">0.05 s</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="master-row">
+        <div class="master-group">
+          <label class="grouplabel">Master Monitor Volume (per-engine)</label>
+          <div class="slider-field">
+            <input type="range" id="masterMonitorVol" min="0" max="100" value="20" step="1">
+            <span class="val" id="masterMonitorVal">20%</span>
+          </div>
+        </div>
+
+        <div class="master-group">
+          <label class="grouplabel">Master App Volume (overall mix)</label>
+          <div class="slider-field">
+            <input type="range" id="masterAppVol" min="0" max="100" value="80" step="1">
+            <span class="val" id="masterAppVal">80%</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="engine-grid" id="engineGrid"></div>

@@ -1,5 +1,5 @@
 /**
- * Main Entry — 20-Engine Rack
+ * Main Entry — 20-Engine Rack with Master Controls
  */
 
 import { ENGINE_CONFIGS } from './gain-curves.js';
@@ -10,6 +10,7 @@ import { fitCanvas, drawScope, drawCurvePreview, drawPlayhead } from './visualiz
 const app = {
   engines: [],
   audioCtx: null,
+  masterGain: null,
   animHandle: null,
   initialized: false
 };
@@ -25,6 +26,11 @@ async function init() {
 
   app.audioCtx = new AudioContext();
 
+  // Master gain for overall app volume
+  app.masterGain = app.audioCtx.createGain();
+  app.masterGain.gain.value = 0.8;
+  app.masterGain.connect(app.audioCtx.destination);
+
   // Attempt WASM load (non-blocking)
   try { await loadDspModule(); } catch (e) {
     console.warn('WASM optional load failed:', e);
@@ -34,23 +40,17 @@ async function init() {
 
   ENGINE_CONFIGS.forEach(config => {
     const engine = new AudioEngine(config, app.audioCtx);
-    engine.connectToDestination(app.audioCtx.destination);
+    engine.connectToDestination(app.masterGain);
     app.engines.push(engine);
 
     const card = buildCard(engine);
     grid.appendChild(card);
 
-    // Initial static preview
     const preview = card.querySelector('.curve-preview');
     drawCurvePreview(preview, config.curve, config.color);
   });
 
-  document.getElementById('stopAllBtn').addEventListener('click', () => {
-    app.engines.forEach(en => {
-      en.stop();
-      updatePlayButton(en.id, false);
-    });
-  });
+  setupMasterControls();
 
   window.addEventListener('resize', () => {
     app.engines.forEach(en => {
@@ -67,7 +67,92 @@ async function init() {
 
   animate();
   app.initialized = true;
+  updateGlobalStatus('Idle · 20 engines ready');
   console.log('AuraGainCurveLab — 20 engines ready');
+}
+
+function setupMasterControls() {
+  // Start All
+  document.getElementById('startAllBtn').addEventListener('click', async () => {
+    updateGlobalStatus('Starting all engines...');
+    let started = 0;
+    for (const en of app.engines) {
+      if (!en.running) {
+        try {
+          await en.start();
+          updatePlayButton(en.id, true);
+          started++;
+        } catch (err) {
+          console.warn(`Engine ${en.id} failed to start:`, err.message);
+        }
+      }
+    }
+    updateGlobalStatus(`${started} engine(s) running`);
+  });
+
+  // Stop All
+  document.getElementById('stopAllBtn').addEventListener('click', () => {
+    app.engines.forEach(en => {
+      en.stop();
+      updatePlayButton(en.id, false);
+    });
+    updateGlobalStatus('All engines stopped');
+  });
+
+  // Master Source
+  document.getElementById('masterSource').addEventListener('change', e => {
+    const type = e.target.value;
+    app.engines.forEach(en => {
+      en.setSource(type).catch(err => console.warn(err.message));
+      // Update card UI
+      const card = document.querySelector(`.engine-card[data-id="${en.id}"]`);
+      if (card) {
+        const sel = card.querySelector('.engine-source');
+        if (sel) sel.value = type;
+      }
+    });
+  });
+
+  // Master Duration
+  document.getElementById('masterDuration').addEventListener('change', e => {
+    const dur = parseFloat(e.target.value);
+    app.engines.forEach(en => {
+      en.setCycleDuration(dur);
+      const card = document.querySelector(`.engine-card[data-id="${en.id}"]`);
+      if (card) {
+        const sel = card.querySelector('.engine-dur');
+        if (sel) sel.value = dur;
+      }
+    });
+  });
+
+  // Master Monitor Volume (per-engine)
+  document.getElementById('masterMonitorVol').addEventListener('input', e => {
+    const vol = parseInt(e.target.value);
+    document.getElementById('masterMonitorVal').textContent = `${vol}%`;
+    app.engines.forEach(en => {
+      en.setMonitorVolume(vol);
+      const card = document.querySelector(`.engine-card[data-id="${en.id}"]`);
+      if (card) {
+        const slider = card.querySelector('.engine-vol');
+        if (slider) slider.value = vol;
+      }
+    });
+  });
+
+  // Master App Volume (overall)
+  document.getElementById('masterAppVol').addEventListener('input', e => {
+    const vol = parseInt(e.target.value);
+    document.getElementById('masterAppVal').textContent = `${vol}%`;
+    if (app.masterGain) {
+      app.masterGain.gain.value = vol / 100;
+    }
+  });
+}
+
+function updateGlobalStatus(text) {
+  const el = document.getElementById('globalStatus');
+  if (el) el.textContent = text;
 }
 
 function buildCard(engine) {
@@ -111,7 +196,6 @@ function buildCard(engine) {
     </div>
   `;
 
-  // Play / Stop
   const playBtn = div.querySelector('.engine-playbtn');
   playBtn.addEventListener('click', async () => {
     if (engine.running) {
@@ -127,19 +211,16 @@ function buildCard(engine) {
     }
   });
 
-  // Source
   const sourceSel = div.querySelector('.engine-source');
   sourceSel.addEventListener('change', e => {
     engine.setSource(e.target.value).catch(err => alert(err.message));
   });
 
-  // Duration
   const durSel = div.querySelector('.engine-dur');
   durSel.addEventListener('change', e => {
     engine.setCycleDuration(parseFloat(e.target.value));
   });
 
-  // Volume
   const volSlider = div.querySelector('.engine-vol');
   volSlider.addEventListener('input', e => {
     engine.setMonitorVolume(parseInt(e.target.value));
@@ -163,7 +244,6 @@ function animate() {
     const preview = card.querySelector('.curve-preview');
     const scope = card.querySelector('.engine-scope');
 
-    // Always redraw preview + playhead (static or moving)
     drawCurvePreview(preview, engine.gainCurve, engine.color);
     drawPlayhead(preview, engine.getCurrentPhase(), engine.gainCurve, engine.color);
 
@@ -183,7 +263,6 @@ function animate() {
   app.animHandle = requestAnimationFrame(animate);
 }
 
-// Cleanup
 window.addEventListener('beforeunload', () => {
   if (app.animHandle) cancelAnimationFrame(app.animHandle);
   app.engines.forEach(e => e.cleanup());
