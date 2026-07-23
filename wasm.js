@@ -1,5 +1,5 @@
 /**
- * WASM Module for DSP (Digital Signal Processing)
+ * WASM Module for DSP (Digital Signal Processing).
  * Handles noise generation, RMS calculations, and other audio processing tasks.
  * @module wasm
  */
